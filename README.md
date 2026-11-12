@@ -26,7 +26,8 @@ Requires Python 3.10+ (standard library only):
 ```bash
 git clone https://github.com/zxu756/agent-xray.git
 cd agent-xray
-pip install -e .
+uv tool install --editable .
+# or: pip install -e .
 ```
 
 ### Wrap Any Coding Agent Session
