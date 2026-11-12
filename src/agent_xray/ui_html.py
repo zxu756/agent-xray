@@ -1,4 +1,9 @@
-"""Embedded Dark Fluoroscopy single-page Context Token Flamegraph & Outbound Header Inspector."""
+"""Editorial Workbench single-page Context Token Flamegraph & Outbound Header Inspector.
+
+Crafted under Hallmark v2 (token floor, 4px spacing grid, surface ladder, untracked
+sentence-case labels, one signal hue + quiet mineral series, derived dark-mode parity)
+and Emil Kowalski design-engineering motion discipline.
+"""
 
 from __future__ import annotations
 
@@ -14,304 +19,692 @@ def render_inspector_html(dataset: dict[str, Any], *, live_poll: bool = False) -
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>agent-xray — Context Token Flamegraph &amp; Outbound Egress Inspector</title>
+<meta name="description" content="Local context token flamegraph, MCP schema bloat leaderboard, and outbound header firewall inspector for AI coding agents." />
+<title>agent-xray · Context Token Flamegraph &amp; Outbound Egress Inspector</title>
+<script>
+  try {{
+    const saved = localStorage.getItem("xray-mode");
+    if (saved === "dark" || saved === "light") document.documentElement.dataset.mode = saved;
+  }} catch (_) {{}}
+</script>
 <style>
+  /* Hallmark v2.0.0 | genre: modern-minimal | scope: app | posture: restrained | modes: light+dark | data: sample */
+  /* critique: ledger workbench parted by hairlines rather than nested dark cards; vermilion argues MCP bloat against quiet mineral context layers. */
   :root {{
-    --bg: #070b11;
-    --panel: #0d141f;
-    --panel-alt: #121c2b;
-    --border: #1d2b3e;
-    --ink: #eef4fb;
-    --muted: #8499b3;
-    --c-sys: #38bdf8;
-    --c-rules: #a78bfa;
-    --c-mcp: #f43f5e;
-    --c-results: #34d399;
-    --c-conv: #fbbf24;
+    color-scheme: light dark;
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, sans-serif;
+    --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+
+    --color-paper: oklch(0.978 0.006 78);
+    --color-paper-2: oklch(0.952 0.009 78);
+    --color-paper-3: oklch(0.924 0.012 78);
+    --color-ink: oklch(0.205 0.012 65);
+    --color-ink-2: oklch(0.355 0.012 65);
+    --color-muted: oklch(0.475 0.012 65);
+    --color-rule: oklch(0.882 0.011 75);
+    --color-rule-strong: oklch(0.795 0.014 75);
+
+    --color-accent: oklch(0.545 0.195 30);
+    --color-accent-ink: oklch(0.985 0.005 78);
+    --color-accent-soft: oklch(0.545 0.195 30 / 0.10);
+    --color-focus: oklch(0.545 0.195 30);
+    --color-selection: oklch(0.545 0.195 30 / 0.18);
+    --shadow-seg: 0 1px 2px oklch(0.20 0.01 65 / 0.08);
+    --shadow-seg-dark: inset 0 0 0 1px oklch(0.355 0.014 68);
+
+    /* Five-bucket context palette: one signal accent (MCP) + quiet mineral ramp */
+    --b-sys: oklch(0.375 0.032 252);
+    --b-rules: oklch(0.545 0.038 258);
+    --b-mcp: oklch(0.555 0.195 30);
+    --b-results: oklch(0.515 0.092 188);
+    --b-conv: oklch(0.665 0.122 76);
+    --b-track: oklch(0.928 0.010 76);
+
+    --badge-ok-bg: oklch(0.515 0.092 188 / 0.12);
+    --badge-ok-ink: oklch(0.365 0.082 188);
+    --badge-warn-bg: oklch(0.665 0.122 76 / 0.16);
+    --badge-warn-ink: oklch(0.415 0.105 68);
+    --badge-neutral-bg: oklch(0.205 0.012 65 / 0.06);
+
+    --space-3xs: 2px;
+    --space-2xs: 4px;
+    --space-xs: 8px;
+    --space-sm: 12px;
+    --space-md: 16px;
+    --space-lg: 24px;
+    --space-xl: 40px;
+
+    --radius-sm: 4px;
+    --radius-md: 8px;
+
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --dur-micro: 140ms;
   }}
+
+  [data-mode="dark"] {{
+    --color-paper: oklch(0.165 0.008 68);
+    --color-paper-2: oklch(0.202 0.009 68);
+    --color-paper-3: oklch(0.238 0.011 68);
+    --color-ink: oklch(0.938 0.008 78);
+    --color-ink-2: oklch(0.812 0.010 75);
+    --color-muted: oklch(0.675 0.012 72);
+    --color-rule: oklch(0.278 0.011 68);
+    --color-rule-strong: oklch(0.355 0.014 68);
+
+    --color-accent: oklch(0.665 0.175 32);
+    --color-accent-ink: oklch(0.155 0.008 68);
+    --color-accent-soft: oklch(0.665 0.175 32 / 0.15);
+    --color-focus: oklch(0.685 0.175 32);
+    --color-selection: oklch(0.665 0.175 32 / 0.28);
+
+    --b-sys: oklch(0.615 0.045 250);
+    --b-rules: oklch(0.735 0.048 258);
+    --b-mcp: oklch(0.655 0.180 32);
+    --b-results: oklch(0.685 0.100 185);
+    --b-conv: oklch(0.765 0.125 80);
+    --b-track: oklch(0.228 0.009 68);
+
+    --badge-ok-bg: oklch(0.685 0.100 185 / 0.16);
+    --badge-ok-ink: oklch(0.795 0.095 185);
+    --badge-warn-bg: oklch(0.765 0.125 80 / 0.16);
+    --badge-warn-ink: oklch(0.835 0.115 80);
+    --badge-neutral-bg: oklch(0.938 0.008 78 / 0.08);
+  }}
+
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{
-    background: var(--bg);
-    color: var(--ink);
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
-    font-size: 13px;
-    line-height: 1.45;
-    font-variant-numeric: tabular-nums;
+  ::selection {{
+    background: var(--color-selection);
+    color: var(--color-ink);
+  }}
+  html {{
+    scrollbar-color: var(--color-rule-strong) var(--color-paper);
+  }}
+  html, body {{
+    overflow-x: clip;
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.5;
+    font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
   }}
   .mono {{
-    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
   }}
-  header {{
+  .tabular {{
+    font-variant-numeric: tabular-nums;
+  }}
+
+  :focus-visible {{
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }}
+  button:disabled, [aria-disabled="true"] {{
+    opacity: 0.55;
+    cursor: not-allowed;
+  }}
+
+  .shell {{
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 0 var(--space-lg) var(--space-xl);
+  }}
+
+  header.masthead {{
+    position: sticky;
+    top: 0;
+    z-index: 300;
+    background: var(--color-paper);
+    border-bottom: 1px solid var(--color-rule);
+  }}
+  .masthead-inner {{
+    max-width: 1440px;
+    margin: 0 auto;
+    height: 64px;
+    padding: 0 var(--space-lg);
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 15px 24px;
-    background: var(--panel);
-    border-bottom: 1px solid var(--border);
+    gap: var(--space-md);
   }}
   .brand {{
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-sm);
+    min-width: 0;
   }}
-  .beam-mark {{
-    width: 30px;
-    height: 30px;
-    border-radius: 7px;
-    background: linear-gradient(135deg, rgba(56,189,248,0.2), rgba(244,63,94,0.22));
-    border: 1px solid rgba(56,189,248,0.45);
+  .mark {{
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-md);
+    background: var(--color-ink);
+    color: var(--color-paper);
     display: grid;
     place-items: center;
+    font-size: 12px;
     font-weight: 700;
-    color: var(--c-sys);
+    flex-shrink: 0;
   }}
-  .brand h1 {{
-    font-size: 16px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-  }}
-  .brand p {{
-    font-size: 12px;
-    color: var(--muted);
-  }}
-  .kpis {{
+  .brand-copy {{
     display: flex;
-    gap: 24px;
     align-items: baseline;
+    gap: var(--space-sm);
+    min-width: 0;
   }}
-  .kpi {{
-    text-align: right;
+  .brand-copy h1 {{
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+    text-wrap: balance;
   }}
-  .kpi .val {{
-    font-size: 16px;
-    font-weight: 600;
-  }}
-  .kpi .lbl {{
-    font-size: 11px;
-    color: var(--muted);
-  }}
-  main {{
-    display: grid;
-    grid-template-columns: 1.42fr 1fr;
-    gap: 16px;
-    padding: 18px 24px 24px;
-    max-width: 1440px;
-    margin: 0 auto;
-  }}
-  .surface {{
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    overflow: hidden;
-  }}
-  .surface-head {{
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    background: rgba(18, 28, 43, 0.55);
-  }}
-  .surface-head h2 {{
-    font-size: 13px;
-    font-weight: 600;
-  }}
-  .legend {{
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    padding: 10px 16px;
-    border-bottom: 1px solid var(--border);
-    font-size: 11.5px;
-    color: var(--muted);
-  }}
-  .legend span {{
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }}
-  .swatch {{
-    width: 9px;
-    height: 9px;
-    border-radius: 2px;
-    display: inline-block;
-  }}
-  .flame-rows {{
-    padding: 10px 14px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }}
-  .turn-row {{
-    padding: 9px 11px;
-    border-radius: 8px;
-    border: 1px solid transparent;
-    background: rgba(18, 28, 43, 0.38);
-    cursor: pointer;
-    transition: border-color 120ms ease, background 120ms ease;
-  }}
-  .turn-row.active {{
-    border-color: rgba(56, 189, 248, 0.55);
-    background: rgba(56, 189, 248, 0.08);
-  }}
-  .turn-row.blocked {{
-    border-color: rgba(244, 63, 94, 0.55);
-    background: rgba(244, 63, 94, 0.09);
-  }}
-  .turn-meta {{
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: 6px;
-    gap: 10px;
-  }}
-  .turn-title {{
-    font-size: 12px;
-    color: var(--ink);
+  .brand-copy p {{
+    font-size: 14px;
+    color: var(--color-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }}
-  .turn-toks {{
-    font-size: 11.5px;
-    color: var(--muted);
+
+  .controls {{
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
     flex-shrink: 0;
+  }}
+  .seg-group {{
+    display: inline-flex;
+    padding: var(--space-2xs);
+    background: var(--color-paper-2);
+    border-radius: var(--radius-md);
+    gap: var(--space-3xs);
+  }}
+  button.ctrl-btn {{
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--color-ink-2);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 500;
+    height: 32px;
+    padding: 0 var(--space-sm);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: transform var(--dur-micro) var(--ease-out), background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
+  }}
+  button.ctrl-btn:active {{
+    transform: scale(0.97);
+  }}
+  button.ctrl-btn[aria-pressed="true"] {{
+    background: var(--color-paper);
+    color: var(--color-ink);
+    box-shadow: var(--shadow-seg);
+  }}
+  [data-mode="dark"] button.ctrl-btn[aria-pressed="true"] {{
+    background: var(--color-paper-3);
+    color: var(--color-ink);
+    box-shadow: var(--shadow-seg-dark);
+  }}
+  button.mode-btn {{
+    appearance: none;
+    border: 1px solid var(--color-rule);
+    background: var(--color-paper);
+    color: var(--color-ink-2);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 500;
+    height: 36px;
+    padding: 0 var(--space-sm);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: transform var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out);
+  }}
+  button.mode-btn:active {{
+    transform: scale(0.97);
+  }}
+  @media (hover: hover) and (pointer: fine) {{
+    button.mode-btn:hover {{
+      border-color: var(--color-rule-strong);
+    }}
+  }}
+
+  /* Ledger stat row: parted by hairlines, zero boxed KPI wall */
+  .stat-strip {{
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    border-bottom: 1px solid var(--color-rule);
+    padding: var(--space-md) 0;
+  }}
+  .stat-cell {{
+    padding: 0 var(--space-md);
+    border-left: 1px solid var(--color-rule);
+    min-width: 0;
+  }}
+  .stat-cell:first-child {{
+    padding-left: 0;
+    border-left: 0;
+  }}
+  .stat-cell:last-child {{
+    padding-right: 0;
+  }}
+  .stat-val {{
+    font-family: var(--font-display);
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    color: var(--color-ink);
+    font-variant-numeric: tabular-nums;
+  }}
+  .stat-val.signal {{
+    color: var(--color-accent);
+  }}
+  .stat-lbl {{
+    margin-top: var(--space-2xs);
+    font-size: 13px;
+    color: var(--color-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }}
+
+  /* Two-column editorial workbench parted by a single rule */
+  .workbench {{
+    display: grid;
+    grid-template-columns: minmax(0, 1.46fr) minmax(0, 1fr);
+    gap: var(--space-lg);
+    padding-top: var(--space-lg);
+    align-items: start;
+  }}
+  .pane-left {{
+    padding-right: var(--space-lg);
+    border-right: 1px solid var(--color-rule);
+    min-width: 0;
+  }}
+  .pane-right {{
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+    min-width: 0;
+  }}
+
+  .sec-head {{
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-sm);
+    padding-bottom: var(--space-sm);
+    border-bottom: 1px solid var(--color-rule);
+  }}
+  .sec-head h2 {{
+    font-family: var(--font-display);
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    line-height: 1.2;
+    text-wrap: balance;
+  }}
+  .sec-meta {{
+    font-size: 13px;
+    color: var(--color-muted);
+    flex-shrink: 0;
+  }}
+
+  .legend {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    padding: var(--space-sm) 0;
+    border-bottom: 1px solid var(--color-rule);
+    font-size: 13px;
+    color: var(--color-ink-2);
+  }}
+  .legend-item {{
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+  }}
+  .swatch {{
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }}
+
+  .flame-list {{
+    display: flex;
+    flex-direction: column;
+  }}
+  .turn-row {{
+    display: block;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--color-rule);
+    padding: var(--space-sm) var(--space-sm);
+    margin: 0 calc(-1 * var(--space-sm));
+    width: calc(100% + 2 * var(--space-sm));
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    color: inherit;
+    font-family: inherit;
+    transition: background-color var(--dur-micro) var(--ease-out), transform var(--dur-micro) var(--ease-out);
+  }}
+  .turn-row:active {{
+    transform: scale(0.994);
+  }}
+  @media (hover: hover) and (pointer: fine) {{
+    .turn-row:hover {{
+      background: var(--color-paper-2);
+    }}
+  }}
+  .turn-row.active {{
+    background: var(--color-paper-2);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    box-shadow: inset 3px 0 0 var(--color-accent);
+  }}
+  .turn-row.blocked {{
+    background: var(--color-accent-soft);
+  }}
+  .turn-top {{
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-md);
+    margin-bottom: var(--space-xs);
+  }}
+  .turn-title {{
+    font-size: 14px;
+    color: var(--color-ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }}
+  .turn-num {{
+    font-weight: 700;
+    margin-right: var(--space-xs);
+  }}
+  .turn-metrics {{
+    font-size: 12.5px;
+    color: var(--color-muted);
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
   }}
   .bar-track {{
     display: flex;
-    height: 16px;
+    height: 14px;
     width: 100%;
-    background: #090f17;
-    border-radius: 4px;
+    background: var(--b-track);
+    border-radius: var(--radius-sm);
     overflow: hidden;
     gap: 1px;
   }}
-  .seg {{ height: 100%; min-width: 2px; }}
-  .right-stack {{
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
+  .seg {{
+    height: 100%;
+    min-width: 2px;
   }}
+
+  /* Inspector well & full-width hairline tables */
+  .well {{
+    background: var(--color-paper-2);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+  }}
+  .well-grid {{
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--space-xs);
+    margin-top: var(--space-xs);
+  }}
+  .well-stat .k {{
+    font-size: 12px;
+    color: var(--color-muted);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2xs);
+    white-space: nowrap;
+  }}
+  .well-stat .v {{
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--color-ink);
+    margin-top: var(--space-3xs);
+  }}
+
+  .alert-banner {{
+    margin-top: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-md);
+    background: var(--color-accent-soft);
+    box-shadow: inset 3px 0 0 var(--color-accent);
+    color: var(--color-ink);
+    font-size: 13.5px;
+    line-height: 1.45;
+  }}
+
   table {{
     width: 100%;
     border-collapse: collapse;
-    font-size: 12px;
+    font-size: 13px;
   }}
   th, td {{
     text-align: left;
-    padding: 8px 14px;
-    border-bottom: 1px solid rgba(29, 43, 62, 0.7);
+    padding: var(--space-xs) var(--space-xs);
+    border-bottom: 1px solid var(--color-rule);
+    vertical-align: middle;
+  }}
+  th:first-child, td:first-child {{
+    padding-left: 0;
+  }}
+  th:last-child, td:last-child {{
+    padding-right: 0;
   }}
   th {{
-    color: var(--muted);
     font-weight: 500;
-    font-size: 11px;
+    font-size: 12.5px;
+    color: var(--color-muted);
+    white-space: nowrap;
   }}
-  td.num, th.num {{ text-align: right; }}
-  .pill {{
-    display: inline-block;
-    padding: 2px 7px;
-    border-radius: 4px;
-    font-size: 10.5px;
-    font-weight: 600;
+  td.num, th.num {{
+    text-align: right;
   }}
-  .pill-rose {{ background: rgba(244,63,94,0.16); color: #fb7185; }}
-  .pill-cyan {{ background: rgba(56,189,248,0.16); color: #38bdf8; }}
-  .pill-emerald {{ background: rgba(52,211,153,0.16); color: #34d399; }}
-  .pill-amber {{ background: rgba(251,191,36,0.16); color: #fbbf24; }}
-  .alert-box {{
-    margin: 10px 14px;
-    padding: 9px 12px;
-    border-radius: 7px;
-    background: rgba(244,63,94,0.14);
-    border: 1px solid rgba(244,63,94,0.45);
-    color: #fecdd3;
+
+  .tag {{
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2xs);
+    padding: var(--space-3xs) var(--space-xs);
+    border-radius: var(--radius-sm);
     font-size: 12px;
+    font-weight: 500;
+    background: var(--badge-neutral-bg);
+    color: var(--color-ink);
   }}
-  @media (max-width: 980px) {{
-    main {{ grid-template-columns: 1fr; }}
+  .tag-signal {{
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+    font-weight: 700;
+  }}
+  .tag-ok {{
+    background: var(--badge-ok-bg);
+    color: var(--badge-ok-ink);
+  }}
+  .tag-warn {{
+    background: var(--badge-warn-bg);
+    color: var(--badge-warn-ink);
+  }}
+
+  .share-cell {{
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-xs);
+  }}
+  .mini-bar {{
+    width: 48px;
+    height: 6px;
+    background: var(--b-track);
+    border-radius: 2px;
+    overflow: hidden;
+  }}
+  .mini-bar > i {{
+    display: block;
+    height: 100%;
+    background: var(--color-ink-2);
+  }}
+  .mini-bar.is-mcp > i {{
+    background: var(--color-accent);
+  }}
+
+  @media (max-width: 1040px) {{
+    .stat-strip {{
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      row-gap: var(--space-md);
+    }}
+    .workbench {{
+      grid-template-columns: 1fr;
+    }}
+    .pane-left {{
+      padding-right: 0;
+      border-right: 0;
+    }}
+  }}
+
+  @media (prefers-reduced-motion: reduce) {{
+    button.ctrl-btn, button.mode-btn, .turn-row {{
+      transition: opacity 150ms linear;
+      transform: none !important;
+    }}
   }}
 </style>
 </head>
 <body>
-<header>
-  <div class="brand">
-    <div class="beam-mark mono">XR</div>
-    <div>
-      <h1>agent-xray</h1>
-      <p>5-bucket context token flamegraph, MCP schema bloat &amp; outbound header firewall</p>
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="brand">
+      <div class="mark mono" aria-hidden="true">xr</div>
+      <div class="brand-copy">
+        <h1>agent-xray</h1>
+        <p>Context token flamegraph &amp; outbound header firewall</p>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="seg-group" role="group" aria-label="Filter captured turns">
+        <button type="button" class="ctrl-btn" data-filter="all" aria-pressed="true" onclick="setFilter('all')">All turns</button>
+        <button type="button" class="ctrl-btn" data-filter="mcp" aria-pressed="false" onclick="setFilter('mcp')">MCP heavy</button>
+        <button type="button" class="ctrl-btn" data-filter="blocked" aria-pressed="false" onclick="setFilter('blocked')">Blocked</button>
+      </div>
+      <button type="button" class="mode-btn" id="mode-toggle" onclick="toggleMode()">Dark theme</button>
     </div>
   </div>
-  <div class="kpis" id="kpi-strip"></div>
 </header>
 
-<main>
-  <section class="surface">
-    <div class="surface-head">
-      <h2>Turn-by-turn context token flamegraph</h2>
-      <span class="mono" style="font-size:11px;color:var(--muted)" id="turn-subtitle"></span>
-    </div>
-    <div class="legend">
-      <span><i class="swatch" style="background:var(--c-sys)"></i>System prompt</span>
-      <span><i class="swatch" style="background:var(--c-rules)"></i>Workspace rules (AGENTS.md / CLAUDE.md)</span>
-      <span><i class="swatch" style="background:var(--c-mcp)"></i>MCP &amp; tool schemas</span>
-      <span><i class="swatch" style="background:var(--c-results)"></i>Tool outputs &amp; file reads</span>
-      <span><i class="swatch" style="background:var(--c-conv)"></i>Conversation</span>
-    </div>
-    <div class="flame-rows" id="flame-rows"></div>
-  </section>
+<main class="shell">
+  <section class="stat-strip" id="kpi-strip" aria-label="Session token and privacy totals"></section>
 
-  <div class="right-stack">
-    <section class="surface">
-      <div class="surface-head">
-        <h2>MCP &amp; tool schema token leaderboard</h2>
-        <span class="mono" style="font-size:11px;color:var(--c-mcp)" id="mcp-share-badge"></span>
+  <div class="workbench">
+    <section class="pane-left" aria-labelledby="flame-heading">
+      <div class="sec-head">
+        <h2 id="flame-heading">Turn-by-turn context token flamegraph</h2>
+        <span class="sec-meta mono" id="turn-subtitle"></span>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Namespace</th>
-            <th class="num">Tools</th>
-            <th class="num">Tokens / turn</th>
-            <th class="num">Share</th>
-          </tr>
-        </thead>
-        <tbody id="ns-tbody"></tbody>
-      </table>
+      <div class="legend" aria-label="Context token buckets">
+        <span class="legend-item"><i class="swatch" style="background:var(--b-sys)"></i>System prompt</span>
+        <span class="legend-item"><i class="swatch" style="background:var(--b-rules)"></i>Workspace rules</span>
+        <span class="legend-item"><i class="swatch" style="background:var(--b-mcp)"></i>MCP &amp; tool schemas</span>
+        <span class="legend-item"><i class="swatch" style="background:var(--b-results)"></i>Tool outputs &amp; files</span>
+        <span class="legend-item"><i class="swatch" style="background:var(--b-conv)"></i>Conversation</span>
+      </div>
+      <div class="flame-list" id="flame-rows"></div>
     </section>
 
-    <section class="surface">
-      <div class="surface-head">
-        <h2>Selected turn outbound header &amp; secret egress audit</h2>
-        <span class="mono" style="font-size:11px;color:var(--muted)" id="selected-turn-badge"></span>
-      </div>
-      <div id="secret-banner"></div>
-      <table>
-        <thead>
-          <tr>
-            <th>Header</th>
-            <th>Observed / transformed value</th>
-            <th class="num">Firewall action</th>
-          </tr>
-        </thead>
-        <tbody id="hdr-tbody"></tbody>
-      </table>
-    </section>
+    <div class="pane-right">
+      <section class="well" id="turn-summary-well" aria-label="Selected turn bucket breakdown"></section>
+
+      <section aria-labelledby="mcp-heading">
+        <div class="sec-head">
+          <h2 id="mcp-heading">MCP &amp; tool schema token leaderboard</h2>
+          <span class="sec-meta mono" id="mcp-share-badge"></span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Namespace</th>
+              <th class="num">Tools</th>
+              <th class="num">Tokens / turn</th>
+              <th class="num">Share</th>
+            </tr>
+          </thead>
+          <tbody id="ns-tbody"></tbody>
+        </table>
+      </section>
+
+      <section aria-labelledby="audit-heading">
+        <div class="sec-head">
+          <h2 id="audit-heading">Outbound header &amp; secret egress audit</h2>
+          <span class="sec-meta mono" id="selected-turn-badge"></span>
+        </div>
+        <div id="secret-banner"></div>
+        <table>
+          <thead>
+            <tr>
+              <th>Header</th>
+              <th>Observed / transformed value</th>
+              <th class="num">Firewall action</th>
+            </tr>
+          </thead>
+          <tbody id="hdr-tbody"></tbody>
+        </table>
+      </section>
+    </div>
   </div>
 </main>
 
 <script>
 let DATA = {payload_json};
 let selectedIdx = Math.max(0, (DATA.traces || []).length - 2);
+let currentFilter = "all";
 
 function fmt(n) {{
   return Number(n || 0).toLocaleString("en-US");
 }}
 
+function syncModeLabel() {{
+  const isDark = document.documentElement.dataset.mode === "dark" ||
+    (!document.documentElement.dataset.mode && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  const btn = document.getElementById("mode-toggle");
+  if (btn) btn.textContent = isDark ? "Light paper" : "Dark theme";
+}}
+
+function toggleMode() {{
+  const cur = document.documentElement.dataset.mode;
+  const next = cur === "dark" ? "light" : "dark";
+  document.documentElement.dataset.mode = next;
+  try {{ localStorage.setItem("xray-mode", next); }} catch (_) {{}}
+  syncModeLabel();
+}}
+
+function setFilter(mode) {{
+  currentFilter = mode;
+  document.querySelectorAll("[data-filter]").forEach(btn => {{
+    btn.setAttribute("aria-pressed", btn.dataset.filter === mode ? "true" : "false");
+  }});
+  render();
+}}
+
 function render() {{
+  syncModeLabel();
   const s = DATA.summary || {{}};
-  const traces = DATA.traces || [];
-  if (selectedIdx >= traces.length) selectedIdx = Math.max(0, traces.length - 1);
+  const allTraces = DATA.traces || [];
+  if (selectedIdx >= allTraces.length) selectedIdx = Math.max(0, allTraces.length - 1);
 
   const bt = s.bucket_totals || {{}};
   const mcpPct = s.total_estimated_input > 0
@@ -319,93 +712,148 @@ function render() {{
     : 0;
 
   document.getElementById("kpi-strip").innerHTML = `
-    <div class="kpi"><div class="val mono">${{fmt(s.total_estimated_input)}}</div><div class="lbl">Estimated prompt tokens</div></div>
-    <div class="kpi"><div class="val mono" style="color:var(--c-mcp)">${{mcpPct}}%</div><div class="lbl">MCP schema share</div></div>
-    <div class="kpi"><div class="val mono" style="color:var(--c-results)">${{fmt(s.total_cache_read)}}</div><div class="lbl">Prompt cache hits</div></div>
-    <div class="kpi"><div class="val mono" style="color:var(--c-sys)">${{fmt(s.stripped_header_count)}}</div><div class="lbl">Telemetry headers stripped</div></div>
-    <div class="kpi"><div class="val mono" style="color:${{s.blocked_count ? 'var(--c-mcp)' : 'var(--muted)'}}">${{s.blocked_count || 0}}</div><div class="lbl">Blocked secret leaks</div></div>
+    <div class="stat-cell">
+      <div class="stat-val mono">${{fmt(s.total_estimated_input)}}</div>
+      <div class="stat-lbl">Estimated prompt tokens</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-val signal mono">${{mcpPct}}%</div>
+      <div class="stat-lbl">MCP schema share</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-val mono">${{fmt(s.total_cache_read)}}</div>
+      <div class="stat-lbl">Prompt cache hits</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-val mono">${{fmt(s.stripped_header_count)}}</div>
+      <div class="stat-lbl">Telemetry headers stripped</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-val ${{s.blocked_count ? 'signal' : ''}} mono">${{s.blocked_count || 0}}</div>
+      <div class="stat-lbl">Blocked secret leaks</div>
+    </div>
   `;
 
-  document.getElementById("turn-subtitle").textContent = `${{traces.length}} captured turns`;
+  const visible = allTraces
+    .map((t, idx) => ({{ t, idx }}))
+    .filter(({{ t }}) => {{
+      if (currentFilter === "blocked") return Boolean(t.blocked);
+      if (currentFilter === "mcp") {{
+        const b = t.buckets || {{}};
+        return (b.mcp_and_tools || 0) / Math.max(1, b.total_estimated || 1) >= 0.35;
+      }}
+      return true;
+    }});
 
-  const maxTurnToks = Math.max(1, ...traces.map(t => (t.buckets && t.buckets.total_estimated) || 1));
+  document.getElementById("turn-subtitle").textContent =
+    visible.length === allTraces.length
+      ? `${{allTraces.length}} captured turns`
+      : `${{visible.length}} of ${{allTraces.length}} turns`;
+
+  const maxTurnToks = Math.max(1, ...allTraces.map(t => (t.buckets && t.buckets.total_estimated) || 1));
   const rowsEl = document.getElementById("flame-rows");
-  if (!traces.length) {{
-    rowsEl.innerHTML = `<div style="padding:28px;color:var(--muted)">Waiting for coding agent traffic on loopback proxy...</div>`;
+  if (!visible.length) {{
+    rowsEl.innerHTML = `<div style="padding:28px 0;color:var(--color-muted)">No turns match the active filter yet. Launch an agent with <code class="mono">agent-xray run --open -- claude</code> to stream turns here.</div>`;
   }} else {{
-    rowsEl.innerHTML = traces.map((t, idx) => {{
+    rowsEl.innerHTML = visible.map(({{ t, idx }}) => {{
       const b = t.buckets || {{}};
       const tot = Math.max(1, b.total_estimated || 1);
       const scale = (tot / maxTurnToks) * 100;
       const segs = [
-        ["var(--c-sys)", b.system_prompt || 0],
-        ["var(--c-rules)", b.workspace_rules || 0],
-        ["var(--c-mcp)", b.mcp_and_tools || 0],
-        ["var(--c-results)", b.tool_results || 0],
-        ["var(--c-conv)", b.conversation || 0],
+        ["var(--b-sys)", b.system_prompt || 0],
+        ["var(--b-rules)", b.workspace_rules || 0],
+        ["var(--b-mcp)", b.mcp_and_tools || 0],
+        ["var(--b-results)", b.tool_results || 0],
+        ["var(--b-conv)", b.conversation || 0],
       ];
       const barHtml = segs
         .filter(([, v]) => v > 0)
         .map(([col, v]) => `<div class="seg" style="background:${{col}};width:${{((v / tot) * scale).toFixed(2)}}%"></div>`)
         .join("");
       const statusTag = t.blocked
-        ? `<span class="pill pill-rose">Blocked 400</span>`
-        : `<span class="mono" style="color:var(--muted)">${{t.latency_ms}} ms</span>`;
-      const cls = ["turn-row", idx === selectedIdx ? "active" : "", t.blocked ? "blocked" : ""].join(" ");
+        ? `<span class="tag tag-signal">Blocked 400</span>`
+        : `<span>${{t.latency_ms}}&nbsp;ms</span>`;
+      const cls = ["turn-row", idx === selectedIdx ? "active" : "", t.blocked ? "blocked" : ""].filter(Boolean).join(" ");
       return `
-        <div class="${{cls}}" onclick="selectTurn(${{idx}})">
-          <div class="turn-meta">
-            <div class="turn-title"><strong>Turn ${{t.turn_number}}</strong> &nbsp;${{escapeHtml(t.prompt_preview || t.path)}}</div>
-            <div class="turn-toks mono">${{fmt(b.total_estimated)}} tok &nbsp;${{statusTag}}</div>
+        <button type="button" class="${{cls}}" onclick="selectTurn(${{idx}})">
+          <div class="turn-top">
+            <div class="turn-title"><span class="turn-num tabular">Turn ${{t.turn_number}}</span>${{escapeHtml(t.prompt_preview || t.path)}}</div>
+            <div class="turn-metrics mono"><span>${{fmt(b.total_estimated)}}&nbsp;tok</span>${{statusTag}}</div>
           </div>
           <div class="bar-track">${{barHtml}}</div>
-        </div>
+        </button>
       `;
     }}).join("");
   }}
 
-  const cur = traces[selectedIdx];
+  const cur = allTraces[selectedIdx];
+  const wellEl = document.getElementById("turn-summary-well");
+  if (cur) {{
+    const cb = cur.buckets || {{}};
+    wellEl.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+        <strong style="font-size:13.5px">Turn ${{cur.turn_number}} context anatomy</strong>
+        <span class="mono" style="font-size:12px;color:var(--color-muted)">${{escapeHtml(cur.model)}} · ${{fmt(cb.total_estimated)}}&nbsp;tok</span>
+      </div>
+      <div class="well-grid">
+        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-sys)"></i>System</div><div class="v mono">${{fmt(cb.system_prompt)}}</div></div>
+        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-rules)"></i>Rules</div><div class="v mono">${{fmt(cb.workspace_rules)}}</div></div>
+        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-mcp)"></i>MCP</div><div class="v mono" style="color:var(--color-accent)">${{fmt(cb.mcp_and_tools)}}</div></div>
+        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-results)"></i>Outputs</div><div class="v mono">${{fmt(cb.tool_results)}}</div></div>
+        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-conv)"></i>Chat</div><div class="v mono">${{fmt(cb.conversation)}}</div></div>
+      </div>
+    `;
+  }} else {{
+    wellEl.innerHTML = `<div style="color:var(--color-muted);font-size:13px">Select a turn to inspect its context slice.</div>`;
+  }}
+
   const curNamespaces = cur ? (cur.tool_namespaces || []) : [];
   const nsTotal = Math.max(1, curNamespaces.reduce((a, x) => a + (x.estimated_tokens || 0), 0));
   document.getElementById("mcp-share-badge").textContent = cur
-    ? `Turn ${{cur.turn_number}}: ${{fmt(cur.buckets.mcp_and_tools)}} tok`
+    ? `Turn ${{cur.turn_number}} · ${{fmt(cur.buckets.mcp_and_tools)}} tok`
     : "";
   document.getElementById("ns-tbody").innerHTML = curNamespaces.map(ns => {{
     const pct = Math.round(((ns.estimated_tokens || 0) / nsTotal) * 100);
-    const pillCls = ns.namespace.startsWith("mcp:") ? "pill-rose" : "pill-cyan";
+    const isMcp = ns.namespace.startsWith("mcp:");
+    const tagCls = isMcp ? "tag tag-signal" : "tag";
     return `
       <tr>
-        <td><span class="pill ${{pillCls}} mono">${{escapeHtml(ns.namespace)}}</span></td>
+        <td><span class="${{tagCls}} mono">${{escapeHtml(ns.namespace)}}</span></td>
         <td class="num mono">${{ns.tool_count}}</td>
         <td class="num mono">${{fmt(ns.estimated_tokens)}}</td>
-        <td class="num mono">${{pct}}%</td>
+        <td class="num mono">
+          <span class="share-cell">
+            <span class="mini-bar ${{isMcp ? 'is-mcp' : ''}}"><i style="width:${{pct}}%"></i></span>
+            <span style="min-width:30px">${{pct}}%</span>
+          </span>
+        </td>
       </tr>
     `;
-  }}).join("") || `<tr><td colspan="4" style="color:var(--muted)">No tool schemas attached on this turn.</td></tr>`;
+  }}).join("") || `<tr><td colspan="4" style="color:var(--color-muted)">No tool schemas attached on this turn.</td></tr>`;
 
   document.getElementById("selected-turn-badge").textContent = cur
-    ? `Turn ${{cur.turn_number}} (${{cur.model}})`
+    ? `Turn ${{cur.turn_number}}`
     : "";
 
   const secBox = document.getElementById("secret-banner");
   if (cur && cur.secret_findings && cur.secret_findings.length) {{
-    secBox.innerHTML = `<div class="alert-box"><strong>Secret egress intercepted:</strong> ` +
+    secBox.innerHTML = `<div class="alert-banner"><strong>Secret egress intercepted:</strong> ` +
       cur.secret_findings.map(f => `${{escapeHtml(f.rule)}} (<span class="mono">${{escapeHtml(f.redacted_snippet)}}</span>)`).join(", ") +
-      ` — upstream transmission aborted locally.</div>`;
+      ` — upstream transmission aborted locally before leaving loopback.</div>`;
   }} else {{
     secBox.innerHTML = "";
   }}
 
   const hdrs = cur ? (cur.header_audit || []) : [];
   document.getElementById("hdr-tbody").innerHTML = hdrs.map(h => {{
-    let pill = "pill-cyan";
-    if (h.action === "stripped" || h.action === "normalized") pill = "pill-emerald";
-    if (h.action === "redacted") pill = "pill-amber";
+    let tagCls = "tag";
+    if (h.action === "stripped" || h.action === "normalized") tagCls = "tag tag-ok";
+    if (h.action === "redacted") tagCls = "tag tag-warn";
     return `
       <tr>
         <td class="mono">${{escapeHtml(h.name)}}</td>
-        <td class="mono" style="color:var(--muted);font-size:11px">${{escapeHtml(h.display_value)}}</td>
-        <td class="num"><span class="pill ${{pill}}">${{escapeHtml(h.action)}}</span></td>
+        <td class="mono" style="color:var(--color-muted);font-size:12px">${{escapeHtml(h.display_value)}}</td>
+        <td class="num"><span class="${{tagCls}}">${{escapeHtml(h.action)}}</span></td>
       </tr>
     `;
   }}).join("");

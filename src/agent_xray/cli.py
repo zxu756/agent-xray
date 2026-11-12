@@ -10,6 +10,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
+from .local_sessions import import_local_desktop_sessions
 from .proxy import ProxyConfig, XRayHTTPServer
 from .store import TraceStore, build_demo_dataset
 from .ui_html import render_inspector_html
@@ -119,6 +120,27 @@ def cmd_export_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_desktop(args: argparse.Namespace) -> int:
+    store = TraceStore(":memory:")
+    count = import_local_desktop_sessions(store, max_turns=args.limit)
+    print(f"[agent-xray] Imported {count} recent Desktop/local turns (OpenCode Desktop & Claude).", file=sys.stderr)
+    cfg = ProxyConfig(host="127.0.0.1", port=args.port)
+    srv = XRayHTTPServer(cfg, store)
+    bound_port = srv.server_address[1]
+    url = f"http://127.0.0.1:{bound_port}/_xray/"
+    print(f"  Live Inspector UI : {url}", file=sys.stderr)
+    if args.open_ui:
+        webbrowser.open(url)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.server_close()
+        store.close()
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     store = TraceStore(args.db)
     _print_terminal_summary(store)
@@ -152,6 +174,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_demo = sub.add_parser("export-demo", help="Export a self-contained static HTML demo inspector")
     p_demo.add_argument("--out", type=str, default="docs/demo-inspector.html", help="Output HTML file path")
     p_demo.set_defaults(func=cmd_export_demo)
+
+    p_desk = sub.add_parser("desktop", help="Inspect local OpenCode Desktop & Claude sessions without proxy setup")
+    p_desk.add_argument("--port", type=int, default=0, help="Loopback TCP port (0 = ephemeral)")
+    p_desk.add_argument("--limit", type=int, default=24, help="Maximum recent local turns to import")
+    p_desk.add_argument("--open", dest="open_ui", action="store_true", help="Automatically open the UI in your default browser")
+    p_desk.set_defaults(func=cmd_desktop)
 
     p_rep = sub.add_parser("report", help="Print terminal summary from an existing SQLite trace DB")
     p_rep.add_argument("--db", type=str, default=None, help="Path to SQLite trace database")
