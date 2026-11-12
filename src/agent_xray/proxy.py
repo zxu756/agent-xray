@@ -64,8 +64,57 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self._forward_upstream("POST")
 
+    def do_PUT(self) -> None:
+        self._forward_upstream("PUT")
+
+    def do_PATCH(self) -> None:
+        self._forward_upstream("PATCH")
+
+    def do_HEAD(self) -> None:
+        self._forward_upstream("HEAD")
+
+    def do_OPTIONS(self) -> None:
+        self._forward_upstream("OPTIONS")
+
     def do_DELETE(self) -> None:
         self._forward_upstream("DELETE")
+
+    def _read_request_body(self) -> bytes:
+        te = (self.headers.get("Transfer-Encoding") or "").lower()
+        if "chunked" in te:
+            chunks = bytearray()
+            while True:
+                line = self.rfile.readline()
+                if not line:
+                    break
+                size_str = line.split(b";", 1)[0].strip()
+                if not size_str:
+                    continue
+                size = int(size_str, 16)
+                if size == 0:
+                    self.rfile.readline()
+                    break
+                chunks.extend(self.rfile.read(size))
+                self.rfile.read(2)  # trailing CRLF
+            return bytes(chunks)
+        content_len = int(self.headers.get("Content-Length") or "0")
+        return self.rfile.read(content_len) if content_len > 0 else b""
+
+    @staticmethod
+    def _is_llm_turn_endpoint(method: str, raw_path: str) -> bool:
+        if method.upper() != "POST":
+            return False
+        clean = raw_path.split("?", 1)[0].rstrip("/").lower()
+        if clean.endswith("/count_tokens"):
+            return False
+        return clean.endswith(
+            (
+                "/v1/messages",
+                "/v1/chat/completions",
+                "/v1/responses",
+                "/v1/completions",
+            )
+        )
 
     def _send_bytes(self, status: int, content_type: str, body: bytes) -> None:
         self.send_response(status)
@@ -84,7 +133,13 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/openai/") or self.path == "/openai":
             sub = self.path[len("/openai") :] or "/"
             return cfg.openai_upstream, sub
-        if "/v1/messages" in self.path:
+        has_anthropic_hdr = (
+            "anthropic-version" in self.headers
+            or "anthropic-beta" in self.headers
+            or "x-api-key" in self.headers
+            or "sk-ant-" in (self.headers.get("Authorization") or "")
+        )
+        if has_anthropic_hdr or "/v1/messages" in self.path or self.path.startswith("/api/"):
             return cfg.anthropic_upstream, self.path
         return cfg.openai_upstream, self.path
 
@@ -93,8 +148,8 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
         cfg: ProxyConfig = self.server.xray_config  # type: ignore[attr-defined]
         store: TraceStore = self.server.trace_store  # type: ignore[attr-defined]
 
-        content_len = int(self.headers.get("Content-Length") or "0")
-        req_body = self.rfile.read(content_len) if content_len > 0 else b""
+        req_body = self._read_request_body()
+        is_turn = self._is_llm_turn_endpoint(method, self.path)
 
         outbound_headers, header_audit = audit_and_prepare_headers(
             self.headers.items(),
@@ -103,7 +158,7 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
 
         payload_dict: dict[str, Any] | None = None
         raw_text = ""
-        if req_body:
+        if req_body and is_turn:
             raw_text = req_body.decode("utf-8", errors="replace")
             try:
                 parsed = json.loads(raw_text)
@@ -114,7 +169,7 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
 
         classification = (
             classify_request_payload(self.path, payload_dict)
-            if payload_dict is not None
+            if (is_turn and payload_dict is not None)
             else None
         )
         secret_findings = scan_body_for_secrets(raw_text) if raw_text else []

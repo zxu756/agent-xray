@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import threading
+import webbrowser
 from pathlib import Path
 
 from .proxy import ProxyConfig, XRayHTTPServer
@@ -86,12 +87,19 @@ def cmd_run(args: argparse.Namespace) -> int:
     thread.start()
 
     env = os.environ.copy()
-    env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{bound_port}/anthropic"
+    env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{bound_port}"
     env["OPENAI_BASE_URL"] = f"http://127.0.0.1:{bound_port}/openai/v1"
+    existing_no_proxy = env.get("NO_PROXY") or env.get("no_proxy") or ""
+    loopback_entries = "127.0.0.1,localhost,::1"
+    merged_no_proxy = f"{existing_no_proxy},{loopback_entries}".strip(",")
+    env["NO_PROXY"] = merged_no_proxy
+    env["no_proxy"] = merged_no_proxy
     print(
-        f"[agent-xray] Inspector live at http://127.0.0.1:{bound_port}/_xray/ — launching {' '.join(cmd)}",
+        f"[agent-xray] Live Flamegraph UI: http://127.0.0.1:{bound_port}/_xray/ — launching {' '.join(cmd)}",
         file=sys.stderr,
     )
+    if args.open_ui:
+        webbrowser.open(f"http://127.0.0.1:{bound_port}/_xray/")
     try:
         completed = subprocess.run(cmd, env=env)
         return int(completed.returncode)
@@ -134,6 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--db", type=str, default=None, help="Path to SQLite trace database")
         p.add_argument("--strip-telemetry-headers", action="store_true", help="Strip SDK telemetry headers and normalize User-Agent")
         p.add_argument("--block-secrets", action="store_true", help="Abort requests containing live API keys or private keys before upstream egress")
+        p.add_argument("--open", dest="open_ui", action="store_true", help="Automatically open the live Flamegraph UI in your default browser")
         if name == "serve":
             p.add_argument("--allow-lan", action="store_true", help="Bind 0.0.0.0 instead of 127.0.0.1")
         else:
