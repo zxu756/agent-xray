@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from .classifier import classify_request_payload, parse_usage_from_response
+from .local_sessions import import_local_desktop_sessions
 from .privacy import audit_and_prepare_headers, scan_body_for_secrets
 from .store import TraceStore
 from .ui_html import render_inspector_html
@@ -26,6 +27,7 @@ class ProxyConfig:
     openai_upstream: str = os.environ.get("AGENT_XRAY_OPENAI_UPSTREAM", "https://api.openai.com")
     strip_telemetry_headers: bool = False
     block_secrets: bool = False
+    lang: str = "auto"
 
 
 class XRayHTTPServer(ThreadingHTTPServer):
@@ -44,17 +46,22 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:
-        if self.path in ("/_xray", "/_xray/"):
+        parsed = urllib.parse.urlsplit(self.path)
+        qs = urllib.parse.parse_qs(parsed.query)
+        cfg: ProxyConfig = self.server.xray_config  # type: ignore[attr-defined]
+        req_lang = (qs.get("lang") or [cfg.lang])[0]
+
+        if parsed.path in ("/_xray", "/_xray/"):
             data = self.server.trace_store.build_summary()  # type: ignore[attr-defined]
-            html = render_inspector_html(data, live_poll=True).encode("utf-8")
+            html = render_inspector_html(data, live_poll=True, lang=req_lang).encode("utf-8")
             self._send_bytes(200, "text/html; charset=utf-8", html)
             return
-        if self.path.startswith("/_xray/api/summary"):
+        if parsed.path.startswith("/_xray/api/summary"):
             data = self.server.trace_store.build_summary()  # type: ignore[attr-defined]
             body = json.dumps(data, ensure_ascii=False).encode("utf-8")
             self._send_bytes(200, "application/json; charset=utf-8", body)
             return
-        if self.path.startswith("/_xray/api/traces"):
+        if parsed.path.startswith("/_xray/api/traces"):
             traces = self.server.trace_store.list_traces()  # type: ignore[attr-defined]
             body = json.dumps({"traces": traces}, ensure_ascii=False).encode("utf-8")
             self._send_bytes(200, "application/json; charset=utf-8", body)
@@ -62,6 +69,16 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
         self._forward_upstream("GET")
 
     def do_POST(self) -> None:
+        parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path == "/_xray/api/scan-desktop":
+            _ = self._read_request_body()
+            store: TraceStore = self.server.trace_store  # type: ignore[attr-defined]
+            imported = import_local_desktop_sessions(store, max_turns=16)
+            payload = store.build_summary()
+            payload["imported"] = imported
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self._send_bytes(200, "application/json; charset=utf-8", body)
+            return
         self._forward_upstream("POST")
 
     def do_PUT(self) -> None:

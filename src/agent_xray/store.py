@@ -115,23 +115,39 @@ class TraceStore:
             ).fetchall()
         result: list[dict[str, Any]] = []
         for idx, r in enumerate(rows, start=1):
+            buckets = json.loads(r["buckets_json"])
+            usage = json.loads(r["usage_json"])
+            blocked = bool(r["blocked"])
+            in_tok = int(usage.get("input_tokens", 0)) or (0 if blocked else int(buckets.get("total_estimated", 0)))
+            cache_tok = int(usage.get("cache_read_tokens", 0) or usage.get("cache_read_input_tokens", 0))
+            out_tok = int(usage.get("output_tokens", 0))
+            uncached_in = max(0, in_tok - cache_tok)
+            est_cost = 0.0 if blocked else round(
+                (uncached_in * 3.0 + cache_tok * 0.30 + out_tok * 15.0) / 1_000_000.0,
+                4,
+            )
+            provider = str(r["provider"])
+            model = str(r["model"])
+            session_key = f"{provider}:{model}"
             result.append(
                 {
                     "id": r["id"],
                     "turn_number": idx,
+                    "session_id": session_key,
                     "created_at": r["created_at"],
-                    "provider": r["provider"],
-                    "model": r["model"],
+                    "provider": provider,
+                    "model": model,
                     "path": r["path"],
                     "status_code": r["status_code"],
                     "latency_ms": r["latency_ms"],
-                    "blocked": bool(r["blocked"]),
-                    "buckets": json.loads(r["buckets_json"]),
+                    "blocked": blocked,
+                    "buckets": buckets,
                     "tool_namespaces": json.loads(r["namespaces_json"]),
-                    "usage": json.loads(r["usage_json"]),
+                    "usage": usage,
+                    "estimated_cost_usd": est_cost,
                     "header_audit": json.loads(r["headers_json"]),
                     "secret_findings": json.loads(r["secrets_json"]),
-                    "prompt_preview": r["prompt_preview"],
+                    "prompt_preview": r["prompt_preview"].replace("\u2014", "-").replace("\u2013", "-"),
                 }
             )
         return result
@@ -145,6 +161,8 @@ class TraceStore:
             "total_actual_input": 0,
             "total_cache_read": 0,
             "total_output_tokens": 0,
+            "estimated_cost_usd": 0.0,
+            "cache_hit_ratio": 0.0,
             "stripped_header_count": 0,
             "bucket_totals": {
                 "system_prompt": 0,
@@ -155,6 +173,7 @@ class TraceStore:
             },
         }
         ns_agg: dict[str, dict[str, Any]] = {}
+        sessions_map: dict[str, dict[str, Any]] = {}
         for t in traces:
             b = t["buckets"]
             for k in totals["bucket_totals"]:
@@ -162,11 +181,26 @@ class TraceStore:
             totals["total_estimated_input"] += int(b.get("total_estimated", 0))
             u = t["usage"]
             totals["total_actual_input"] += int(u.get("input_tokens", 0))
-            totals["total_cache_read"] += int(u.get("cache_read_tokens", 0))
+            totals["total_cache_read"] += int(u.get("cache_read_tokens", 0) or u.get("cache_read_input_tokens", 0))
             totals["total_output_tokens"] += int(u.get("output_tokens", 0))
+            totals["estimated_cost_usd"] = round(
+                totals["estimated_cost_usd"] + float(t.get("estimated_cost_usd", 0.0)),
+                4,
+            )
             totals["stripped_header_count"] += sum(
                 1 for h in t["header_audit"] if h.get("action") in ("stripped", "normalized")
             )
+            skey = str(t.get("session_id") or f"{t['provider']}:{t['model']}")
+            sslot = sessions_map.setdefault(
+                skey,
+                {
+                    "session_id": skey,
+                    "provider": t["provider"],
+                    "model": t["model"],
+                    "turn_count": 0,
+                },
+            )
+            sslot["turn_count"] += 1
             for ns in t["tool_namespaces"]:
                 name = ns["namespace"]
                 slot = ns_agg.setdefault(
@@ -177,11 +211,15 @@ class TraceStore:
                 slot["per_turn_tokens"] = max(slot["per_turn_tokens"], int(ns.get("estimated_tokens", 0)))
                 slot["cumulative_tokens"] += int(ns.get("estimated_tokens", 0))
 
+        denom = totals["total_actual_input"] or totals["total_estimated_input"]
+        totals["cache_hit_ratio"] = round(totals["total_cache_read"] / max(1, denom), 4) if denom > 0 else 0.0
+
         top_namespaces = sorted(
             ns_agg.values(), key=lambda x: x["cumulative_tokens"], reverse=True
         )
         return {
             "summary": totals,
+            "sessions": list(sessions_map.values()),
             "top_namespaces": top_namespaces,
             "traces": traces,
         }
@@ -205,7 +243,7 @@ def build_demo_dataset() -> dict[str, Any]:
     headers_sample = [
         {"name": "x-api-key", "display_value": "sk-ant••••9fQ (54 chars)", "category": "auth", "action": "redacted"},
         {"name": "anthropic-version", "display_value": "2023-06-01", "category": "protocol", "action": "forwarded"},
-        {"name": "User-Agent", "display_value": "claude-cli/2.1.4 (darwin arm64) -> agent-xray/0.1.0", "category": "fingerprint", "action": "normalized"},
+        {"name": "User-Agent", "display_value": "claude-cli/2.1.4 (darwin arm64) -> agent-xray/0.2.0", "category": "fingerprint", "action": "normalized"},
         {"name": "x-stainless-os", "display_value": "MacOS", "category": "telemetry", "action": "stripped"},
         {"name": "x-stainless-arch", "display_value": "arm64", "category": "telemetry", "action": "stripped"},
         {"name": "x-stainless-runtime-version", "display_value": "v22.23.4", "category": "telemetry", "action": "stripped"},
@@ -217,7 +255,7 @@ def build_demo_dataset() -> dict[str, Any]:
         (3600, 2940, 31850, 14850, 1640, 58400, 38100, 880, "Patch rpath flags in Scripts/build-app.sh and run test suite", 200, 1490, False, []),
         (3600, 2940, 31850, 22900, 2310, 67800, 44600, 620, "Verify codesign --strict output and summarize binary footprint", 200, 960, False, []),
         (3600, 2940, 31850, 24100, 2790, 0, 0, 0, "cat .env.production && publish release notes", 400, 14, True, [{"rule": "Anthropic API Key", "redacted_snippet": "sk-ant••••X9A (51 chars)"}]),
-        (3600, 2940, 7490, 18600, 3120, 38200, 29800, 740, "Disabled unused MCP servers — re-run release verification", 200, 780, False, []),
+        (3600, 2940, 7490, 18600, 3120, 38200, 29800, 740, "Disabled unused MCP servers - re-run release verification", 200, 780, False, []),
     ]
 
     for idx, (sys_t, rules_t, mcp_t, res_t, conv_t, in_u, cache_u, out_u, preview, code, lat, blk, sec) in enumerate(turns):
