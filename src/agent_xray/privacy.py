@@ -6,6 +6,8 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Iterable
 
+from . import __version__
+
 SENSITIVE_AUTH_HEADERS = {
     "authorization",
     "x-api-key",
@@ -132,11 +134,12 @@ def audit_and_prepare_headers(
         if lower == "user-agent":
             has_os_leak = any(tok in value.lower() for tok in OS_LEAK_TOKENS)
             if strip_telemetry:
-                outbound["User-Agent"] = "agent-xray/0.1.0"
+                norm_ua = f"agent-xray/{__version__}"
+                outbound["User-Agent"] = norm_ua
                 audit.append(
                     HeaderAuditEntry(
                         name=name,
-                        display_value=f"{value[:64]} -> agent-xray/0.1.0",
+                        display_value=f"{value[:64]} -> {norm_ua}",
                         category="fingerprint" if has_os_leak else "protocol",
                         action="normalized",
                     )

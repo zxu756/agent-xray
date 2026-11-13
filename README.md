@@ -1,23 +1,27 @@
 # agent-xray
 
-**Zero-MITM-cert local streaming proxy & 5-bucket Context Token Flamegraph inspector for AI coding agents (`Claude Code`, `Codex`, `OpenCode`).**
+**English** | **[简体中文](README.zh-CN.md)**
+
+**Zero-MITM-cert local streaming proxy & bilingual (`中文 | EN`) 5-bucket Context Token Flamegraph inspector (`v0.2.0`) for AI coding agents (`Claude Code`, `Codex`, `OpenCode`).**
 
 ![agent-xray Context Token Flamegraph Inspector](docs/screenshot.png)
 
-Ever wondered why a 20-word prompt in `Claude Code`, `Codex`, or `OpenCode` just billed **48,000 input tokens**—or what SDK telemetry headers and pasted `.env` tokens are leaving your machine?
+Ever wondered why a 20-word prompt in `Claude Code`, `Codex`, or `OpenCode` just billed **48,000 input tokens** - or what SDK telemetry headers and pasted `.env` tokens are leaving your machine?
 
 **agent-xray** wraps any coding agent CLI over a `127.0.0.1` loopback HTTP/SSE passthrough (`ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL`) with **zero custom TLS root certificates**, **zero third-party Python dependencies**, and **zero streaming latency**.
 
 ## What It Reveals
 
-1. **5-Bucket Turn-by-Turn Context Token Flamegraph** — Decomposes every Anthropic `/v1/messages` and OpenAI `/v1/responses` or `/v1/chat/completions` turn into:
+1. **5-Bucket Turn-by-Turn Context Token Flamegraph** - Decomposes every Anthropic `/v1/messages` and OpenAI `/v1/responses` or `/v1/chat/completions` turn into:
    - **System prompt** (core agent harness)
    - **Workspace rules** (`AGENTS.md`, `CLAUDE.md`, `<user_rules>`, `<system-reminder>`)
-   - **MCP & tool schemas** — ranked per MCP server namespace (`mcp:rea`, `mcp:playwright`, `mcp:scholar`, `builtin`) so you immediately spot 30k-token schema bloat
+   - **MCP & tool schemas** - ranked per MCP server namespace (`mcp:rea`, `mcp:playwright`, `mcp:scholar`, `builtin`) so you immediately spot 30k-token schema bloat
    - **Tool outputs & file reads** (`tool_result` / `function_call_output` growth across turns)
    - **Conversation history**
-2. **Outbound Header Audit & Telemetry Stripper (`--strip-telemetry-headers`)** — Audits outbound headers, redacts API keys before storage, strips `x-stainless-*` / telemetry headers, and normalizes `User-Agent` OS/CPU fingerprints.
-3. **Local Secret Egress Guard (`--block-secrets`)** — Detects live credentials (`sk-ant-...`, `sk-proj-...`, `ghp_...`, `AKIA...`, PEM private keys) accidentally included in prompts or tool outputs and aborts the request locally with HTTP `400` *before* a single byte hits the upstream network.
+2. **KPI Telemetry Strip & Session Selector (`v0.2.0`)** - Surfaces estimated prompt tokens, session USD cost, context bloat %, prompt cache hit ratio, waste schema tokens, stripped telemetry headers, and blocked secret leaks, with per-session filtering and one-click local Desktop session scanning (`OpenCode Desktop` & `Claude`).
+3. **Outbound Header Audit & Telemetry Stripper (`--strip-telemetry-headers`)** - Audits outbound headers, redacts API keys before storage, strips `x-stainless-*` / telemetry headers, and normalizes `User-Agent` OS/CPU fingerprints.
+4. **Local Secret Egress Guard (`--block-secrets`)** - Detects live credentials (`sk-ant-...`, `sk-proj-...`, `ghp_...`, `AKIA...`, PEM private keys) accidentally included in prompts or tool outputs and aborts the request locally with HTTP `400` *before* a single byte hits the upstream network.
+5. **Full Bilingual CLI & Live Web UI (`v0.2.0`)** - Supports `--lang {auto,zh,en}`, `AGENT_XRAY_LANG`, and system locale (`zh*`) auto-detection across terminal summaries and the Web Flamegraph Workbench, with a top-bar `中文 | EN` live switcher pill (`localStorage` persisted + `?lang=zh` URL override).
 
 ## Quick Start
 
@@ -36,9 +40,11 @@ uv tool install --editable .
 # Wrap Claude Code with live Context Flamegraph + telemetry header stripping + secret guard
 agent-xray run --strip-telemetry-headers --block-secrets -- claude
 
-# Wrap Codex CLI or OpenCode
-agent-xray run --strip-telemetry-headers -- codex
-agent-xray run -- opencode
+# Chinese CLI & Web UI default
+agent-xray --lang zh run --strip-telemetry-headers --block-secrets -- claude
+
+# Inspect local OpenCode Desktop & Claude transcripts without proxy setup
+agent-xray desktop --open
 ```
 
 While the agent runs, open the live URL printed in your terminal (e.g. `http://127.0.0.1:8788/_xray/`) to inspect the Context Token Flamegraph in real time. When the session exits, `agent-xray` prints a concise breakdown of your top token-consuming MCP namespaces.

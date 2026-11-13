@@ -1,4 +1,4 @@
-"""Editorial Workbench single-page Context Token Flamegraph & Outbound Header Inspector.
+"""Editorial Workbench single-page bilingual Context Token Flamegraph & Outbound Header Inspector.
 
 Crafted under Hallmark v2 (token floor, 4px spacing grid, surface ladder, untracked
 sentence-case labels, one signal hue + quiet mineral series, derived dark-mode parity)
@@ -7,20 +7,74 @@ and Emil Kowalski design-engineering motion discipline.
 
 from __future__ import annotations
 
+import html
 import json
 from typing import Any
 
+from .i18n import resolve_html_lang_mode
 
-def render_inspector_html(dataset: dict[str, Any], *, live_poll: bool = False) -> str:
-    payload_json = json.dumps(dataset, ensure_ascii=False).replace("</", "<\\/")
+
+def _sanitize_dashes(text: str) -> str:
+    return text.replace("\u2014", "-").replace("\u2013", "-")
+
+
+def render_inspector_html(
+    dataset: dict[str, Any],
+    *,
+    live_poll: bool = False,
+    lang: str = "auto",
+) -> str:
+    render_lang, default_lang_attr = resolve_html_lang_mode(lang)
+    is_zh = render_lang == "zh"
+    html_lang_attr = "zh-CN" if is_zh else "en"
+
+    raw_json = _sanitize_dashes(json.dumps(dataset, ensure_ascii=False)).replace("</", "<\\/")
     poll_js = "true" if live_poll else "false"
+
+    doc_title = (
+        "agent-xray · 上下文 Token 火焰图与出站隐私防火墙"
+        if is_zh
+        else "agent-xray · Context Token Flamegraph & Outbound Egress Inspector"
+    )
+    brand_sub = (
+        "上下文 Token 火焰图与出站隐私防火墙"
+        if is_zh
+        else "Context token flamegraph & outbound header firewall"
+    )
+    scan_btn_txt = "扫描桌面端" if is_zh else "Scan Desktop"
+    f_all_txt = "全部轮次" if is_zh else "All turns"
+    f_mcp_txt = "MCP 高占比" if is_zh else "MCP heavy"
+    f_blk_txt = "已拦截" if is_zh else "Blocked"
+    mode_btn_txt = "深色主题" if is_zh else "Dark theme"
+
+    flame_h2 = "逐轮上下文 Token 构成火焰图" if is_zh else "Turn-by-turn context token flamegraph"
+    leg_sys = "系统提示词" if is_zh else "System prompt"
+    leg_rules = "工作区规则" if is_zh else "Workspace rules"
+    leg_mcp = "MCP 与工具定义" if is_zh else "MCP & tool schemas"
+    leg_res = "工具输出与文件" if is_zh else "Tool outputs & files"
+    leg_conv = "对话历史" if is_zh else "Conversation"
+
+    mcp_h2 = "MCP 与工具定义 Token 排行榜" if is_zh else "MCP & tool schema token leaderboard"
+    th_ns = "命名空间" if is_zh else "Namespace"
+    th_tools = "工具数" if is_zh else "Tools"
+    th_tok_turn = "每轮 Token" if is_zh else "Tokens / turn"
+    th_share = "占比" if is_zh else "Share"
+
+    audit_h2 = "出站请求头与密钥外泄审计" if is_zh else "Outbound header & secret egress audit"
+    th_hdr = "请求头" if is_zh else "Header"
+    th_val = "观测值 / 脱敏转换值" if is_zh else "Observed / transformed value"
+    th_act = "防火墙动作" if is_zh else "Firewall action"
+
+    zh_pressed = "true" if is_zh else "false"
+    en_pressed = "false" if is_zh else "true"
+
     return f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="{html_lang_attr}" data-default-lang="{default_lang_attr}">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content="Local context token flamegraph, MCP schema bloat leaderboard, and outbound header firewall inspector for AI coding agents." />
-<title>agent-xray · Context Token Flamegraph &amp; Outbound Egress Inspector</title>
+<title>{html.escape(doc_title)}</title>
 <script>
   try {{
     const saved = localStorage.getItem("xray-mode");
@@ -32,8 +86,8 @@ def render_inspector_html(dataset: dict[str, Any], *, live_poll: bool = False) -
   /* critique: ledger workbench parted by hairlines rather than nested dark cards; vermilion argues MCP bloat against quiet mineral context layers. */
   :root {{
     color-scheme: light dark;
-    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
-    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", system-ui, sans-serif;
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", "Inter", system-ui, sans-serif;
+    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", "Inter", system-ui, sans-serif;
     --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
 
     --color-paper: oklch(0.978 0.006 78);
@@ -163,12 +217,13 @@ def render_inspector_html(dataset: dict[str, Any], *, live_poll: bool = False) -
   .masthead-inner {{
     max-width: 1440px;
     margin: 0 auto;
-    height: 64px;
-    padding: 0 var(--space-lg);
+    min-height: 64px;
+    padding: var(--space-xs) var(--space-lg);
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-md);
+    flex-wrap: wrap;
   }}
   .brand {{
     display: flex;
@@ -201,6 +256,8 @@ def render_inspector_html(dataset: dict[str, Any], *, live_poll: bool = False) -
     letter-spacing: -0.025em;
     line-height: 1.1;
     text-wrap: balance;
+    overflow-wrap: break-word;
+    min-width: 0;
   }}
   .brand-copy p {{
     font-size: 14px;
@@ -215,13 +272,34 @@ def render_inspector_html(dataset: dict[str, Any], *, live_poll: bool = False) -
     align-items: center;
     gap: var(--space-xs);
     flex-shrink: 0;
+    flex-wrap: wrap;
+  }}
+  .session-select {{
+    appearance: auto;
+    border: 0;
+    border-bottom: 1px solid var(--color-rule-strong);
+    background: transparent;
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 500;
+    height: 36px;
+    padding: 0 var(--space-xs);
+    cursor: pointer;
   }}
   .seg-group {{
     display: inline-flex;
+    align-items: center;
     padding: var(--space-2xs);
     background: var(--color-paper-2);
     border-radius: var(--radius-md);
     gap: var(--space-3xs);
+  }}
+  .lang-sep {{
+    font-size: 11px;
+    color: var(--color-muted);
+    user-select: none;
+    padding: 0 var(--space-3xs);
   }}
   button.ctrl-btn {{
     appearance: none;
@@ -235,6 +313,7 @@ def render_inspector_html(dataset: dict[str, Any], *, live_poll: bool = False) -
     padding: 0 var(--space-sm);
     border-radius: var(--radius-sm);
     cursor: pointer;
+    white-space: nowrap;
     transition: transform var(--dur-micro) var(--ease-out), background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
   }}
   button.ctrl-btn:active {{
@@ -262,6 +341,7 @@ def render_inspector_html(dataset: dict[str, Any], *, live_poll: bool = False) -
     padding: 0 var(--space-sm);
     border-radius: var(--radius-md);
     cursor: pointer;
+    white-space: nowrap;
     transition: transform var(--dur-micro) var(--ease-out), border-color var(--dur-micro) var(--ease-out);
   }}
   button.mode-btn:active {{
@@ -307,10 +387,25 @@ def render_inspector_html(dataset: dict[str, Any], *, live_poll: bool = False) -
   .stat-lbl {{
     margin-top: var(--space-2xs);
     font-size: 13px;
+    color: var(--color-ink-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }}
+  .stat-sub {{
+    margin-top: var(--space-3xs);
+    font-size: 12px;
     color: var(--color-muted);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }}
+
+  .scan-notice {{
+    padding: var(--space-xs) 0;
+    border-bottom: 1px solid var(--color-rule);
+    font-size: 13px;
+    color: var(--color-ink-2);
   }}
 
   /* Two-column editorial workbench parted by a single rule */
@@ -348,6 +443,8 @@ def render_inspector_html(dataset: dict[str, Any], *, live_poll: bool = False) -
     letter-spacing: -0.015em;
     line-height: 1.2;
     text-wrap: balance;
+    overflow-wrap: break-word;
+    min-width: 0;
   }}
   .sec-meta {{
     font-size: 13px;
@@ -527,6 +624,7 @@ def render_inspector_html(dataset: dict[str, Any], *, live_poll: bool = False) -
     font-weight: 500;
     background: var(--badge-neutral-bg);
     color: var(--color-ink);
+    white-space: nowrap;
   }}
   .tag-signal {{
     background: var(--color-accent-soft);
@@ -593,35 +691,43 @@ def render_inspector_html(dataset: dict[str, Any], *, live_poll: bool = False) -
       <div class="mark mono" aria-hidden="true">xr</div>
       <div class="brand-copy">
         <h1>agent-xray</h1>
-        <p>Context token flamegraph &amp; outbound header firewall</p>
+        <p id="brand-sub">{html.escape(brand_sub)}</p>
       </div>
     </div>
     <div class="controls">
+      <select id="session-select" class="session-select" aria-label="Select captured session"></select>
+      <button type="button" class="mode-btn" id="scan-desktop-btn" onclick="scanDesktopSessions()">{html.escape(scan_btn_txt)}</button>
       <div class="seg-group" role="group" aria-label="Filter captured turns">
-        <button type="button" class="ctrl-btn" data-filter="all" aria-pressed="true" onclick="setFilter('all')">All turns</button>
-        <button type="button" class="ctrl-btn" data-filter="mcp" aria-pressed="false" onclick="setFilter('mcp')">MCP heavy</button>
-        <button type="button" class="ctrl-btn" data-filter="blocked" aria-pressed="false" onclick="setFilter('blocked')">Blocked</button>
+        <button type="button" class="ctrl-btn" id="flt-all" data-filter="all" aria-pressed="true" onclick="setFilter('all')">{html.escape(f_all_txt)}</button>
+        <button type="button" class="ctrl-btn" id="flt-mcp" data-filter="mcp" aria-pressed="false" onclick="setFilter('mcp')">{html.escape(f_mcp_txt)}</button>
+        <button type="button" class="ctrl-btn" id="flt-blocked" data-filter="blocked" aria-pressed="false" onclick="setFilter('blocked')">{html.escape(f_blk_txt)}</button>
       </div>
-      <button type="button" class="mode-btn" id="mode-toggle" onclick="toggleMode()">Dark theme</button>
+      <div class="seg-group" id="lang-switcher" role="group" aria-label="中文 / EN language switcher">
+        <button type="button" class="ctrl-btn" data-lang-switch="zh" aria-pressed="{zh_pressed}" onclick="setLang('zh', true)">中文</button>
+        <span class="lang-sep" aria-hidden="true">|</span>
+        <button type="button" class="ctrl-btn" data-lang-switch="en" aria-pressed="{en_pressed}" onclick="setLang('en', true)">EN</button>
+      </div>
+      <button type="button" class="mode-btn" id="mode-toggle" onclick="toggleMode()">{html.escape(mode_btn_txt)}</button>
     </div>
   </div>
 </header>
 
 <main class="shell">
+  <div id="scan-status-bar" class="scan-notice" hidden></div>
   <section class="stat-strip" id="kpi-strip" aria-label="Session token and privacy totals"></section>
 
   <div class="workbench">
     <section class="pane-left" aria-labelledby="flame-heading">
       <div class="sec-head">
-        <h2 id="flame-heading">Turn-by-turn context token flamegraph</h2>
+        <h2 id="flame-heading">{html.escape(flame_h2)}</h2>
         <span class="sec-meta mono" id="turn-subtitle"></span>
       </div>
       <div class="legend" aria-label="Context token buckets">
-        <span class="legend-item"><i class="swatch" style="background:var(--b-sys)"></i>System prompt</span>
-        <span class="legend-item"><i class="swatch" style="background:var(--b-rules)"></i>Workspace rules</span>
-        <span class="legend-item"><i class="swatch" style="background:var(--b-mcp)"></i>MCP &amp; tool schemas</span>
-        <span class="legend-item"><i class="swatch" style="background:var(--b-results)"></i>Tool outputs &amp; files</span>
-        <span class="legend-item"><i class="swatch" style="background:var(--b-conv)"></i>Conversation</span>
+        <span class="legend-item"><i class="swatch" style="background:var(--b-sys)"></i><span id="leg-sys">{html.escape(leg_sys)}</span></span>
+        <span class="legend-item"><i class="swatch" style="background:var(--b-rules)"></i><span id="leg-rules">{html.escape(leg_rules)}</span></span>
+        <span class="legend-item"><i class="swatch" style="background:var(--b-mcp)"></i><span id="leg-mcp">{html.escape(leg_mcp)}</span></span>
+        <span class="legend-item"><i class="swatch" style="background:var(--b-results)"></i><span id="leg-res">{html.escape(leg_res)}</span></span>
+        <span class="legend-item"><i class="swatch" style="background:var(--b-conv)"></i><span id="leg-conv">{html.escape(leg_conv)}</span></span>
       </div>
       <div class="flame-list" id="flame-rows"></div>
     </section>
@@ -631,16 +737,16 @@ def render_inspector_html(dataset: dict[str, Any], *, live_poll: bool = False) -
 
       <section aria-labelledby="mcp-heading">
         <div class="sec-head">
-          <h2 id="mcp-heading">MCP &amp; tool schema token leaderboard</h2>
+          <h2 id="mcp-heading">{html.escape(mcp_h2)}</h2>
           <span class="sec-meta mono" id="mcp-share-badge"></span>
         </div>
         <table>
           <thead>
             <tr>
-              <th>Namespace</th>
-              <th class="num">Tools</th>
-              <th class="num">Tokens / turn</th>
-              <th class="num">Share</th>
+              <th id="th-ns">{html.escape(th_ns)}</th>
+              <th class="num" id="th-tools">{html.escape(th_tools)}</th>
+              <th class="num" id="th-tok-turn">{html.escape(th_tok_turn)}</th>
+              <th class="num" id="th-share">{html.escape(th_share)}</th>
             </tr>
           </thead>
           <tbody id="ns-tbody"></tbody>
@@ -649,16 +755,16 @@ def render_inspector_html(dataset: dict[str, Any], *, live_poll: bool = False) -
 
       <section aria-labelledby="audit-heading">
         <div class="sec-head">
-          <h2 id="audit-heading">Outbound header &amp; secret egress audit</h2>
+          <h2 id="audit-heading">{html.escape(audit_h2)}</h2>
           <span class="sec-meta mono" id="selected-turn-badge"></span>
         </div>
         <div id="secret-banner"></div>
         <table>
           <thead>
             <tr>
-              <th>Header</th>
-              <th>Observed / transformed value</th>
-              <th class="num">Firewall action</th>
+              <th id="th-hdr">{html.escape(th_hdr)}</th>
+              <th id="th-val">{html.escape(th_val)}</th>
+              <th class="num" id="th-act">{html.escape(th_act)}</th>
             </tr>
           </thead>
           <tbody id="hdr-tbody"></tbody>
@@ -669,19 +775,173 @@ def render_inspector_html(dataset: dict[str, Any], *, live_poll: bool = False) -
 </main>
 
 <script>
-let DATA = {payload_json};
+let DATA = {raw_json};
+const IS_LIVE_POLL = {poll_js};
 let selectedIdx = Math.max(0, (DATA.traces || []).length - 2);
 let currentFilter = "all";
+let currentSession = "all";
+let currentLang = "en";
+let lastScanStatusKey = "";
+let lastScanCount = 0;
+
+const I18N = {{
+  en: {{
+    docTitle: "agent-xray · Context Token Flamegraph & Outbound Egress Inspector",
+    brandSub: "Context token flamegraph & outbound header firewall",
+    scanBtn: "Scan Desktop",
+    scanningBtn: "Scanning...",
+    scanLiveDone: "Imported {{n}} recent turns from local OpenCode Desktop & Claude transcripts.",
+    scanOfflineHint: "Static demo snapshot active. Run `agent-xray desktop --open` locally to scan live OpenCode & Claude sessions.",
+    allSessions: "All sessions ({{n}})",
+    fltAll: "All turns",
+    fltMcp: "MCP heavy",
+    fltBlocked: "Blocked",
+    darkTheme: "Dark theme",
+    lightPaper: "Light paper",
+    kpi1Lbl: "Estimated prompt tokens",
+    kpi2Lbl: "Context bloat (MCP share)",
+    kpi3Lbl: "Prompt cache hit ratio",
+    kpi4Lbl: "Telemetry headers stripped",
+    kpi4Sub: "SDK & OS fingerprints scrubbed",
+    kpi5Lbl: "Blocked secret leaks",
+    kpi5Sub: "Aborted locally before egress",
+    flameH2: "Turn-by-turn context token flamegraph",
+    legSys: "System prompt",
+    legRules: "Workspace rules",
+    legMcp: "MCP & tool schemas",
+    legRes: "Tool outputs & files",
+    legConv: "Conversation",
+    wellSys: "System",
+    wellRules: "Rules",
+    wellMcp: "MCP",
+    wellRes: "Outputs",
+    wellConv: "Chat",
+    emptyTurns: "No turns match the active filter yet. Launch an agent with <code class='mono'>agent-xray run --open -- claude</code> or scan local Desktop sessions.",
+    emptyWell: "Select a turn to inspect its context slice.",
+    mcpH2: "MCP & tool schema token leaderboard",
+    thNs: "Namespace",
+    thTools: "Tools",
+    thTokTurn: "Tokens / turn",
+    thShare: "Share",
+    emptySchemas: "No tool schemas attached on this turn.",
+    auditH2: "Outbound header & secret egress audit",
+    thHdr: "Header",
+    thVal: "Observed / transformed value",
+    thAct: "Firewall action",
+    emptyHdrs: "No outbound headers recorded for this turn.",
+    blockedTag: "Blocked 400",
+    secretPrefix: "Secret egress intercepted:",
+    secretSuffix: " - upstream transmission aborted locally before leaving loopback.",
+    actions: {{
+      redacted: "redacted",
+      stripped: "stripped",
+      normalized: "normalized",
+      forwarded: "forwarded"
+    }},
+    demoPrompts: {{}}
+  }},
+  zh: {{
+    docTitle: "agent-xray · 上下文 Token 火焰图与出站隐私防火墙",
+    brandSub: "上下文 Token 火焰图与出站隐私防火墙",
+    scanBtn: "扫描桌面端",
+    scanningBtn: "正在扫描...",
+    scanLiveDone: "已从本地 OpenCode Desktop 与 Claude 会话日志导入 {{n}} 轮近期请求。",
+    scanOfflineHint: "当前为离线静态演示快照；在终端运行 `agent-xray desktop --open` 即可免代理扫描本机桌面会话。",
+    allSessions: "全部会话（{{n}} 轮）",
+    fltAll: "全部轮次",
+    fltMcp: "MCP 高占比",
+    fltBlocked: "已拦截",
+    darkTheme: "深色主题",
+    lightPaper: "浅色纸张",
+    kpi1Lbl: "预估输入 Token 总量",
+    kpi2Lbl: "上下文膨胀率（MCP 占比）",
+    kpi3Lbl: "提示词缓存命中率",
+    kpi4Lbl: "已剥离遥测请求头",
+    kpi4Sub: "已清洗 SDK 与操作系统指纹",
+    kpi5Lbl: "已拦截密钥外泄",
+    kpi5Sub: "出站前于本地回环层阻断",
+    flameH2: "逐轮上下文 Token 构成火焰图",
+    legSys: "系统提示词",
+    legRules: "工作区规则",
+    legMcp: "MCP 与工具定义",
+    legRes: "工具输出与文件",
+    legConv: "对话历史",
+    wellSys: "系统",
+    wellRules: "规则",
+    wellMcp: "MCP 工具",
+    wellRes: "工具输出",
+    wellConv: "对话",
+    emptyTurns: "当前筛选条件下暂无匹配轮次。请运行 <code class='mono'>agent-xray run --open -- claude</code> 捕获实时流量，或扫描本地桌面会话。",
+    emptyWell: "请选择任意请求轮次以查看上下文切片解剖。",
+    mcpH2: "MCP 与工具定义 Token 排行榜",
+    thNs: "命名空间",
+    thTools: "工具数",
+    thTokTurn: "每轮 Token",
+    thShare: "占比",
+    emptySchemas: "本轮请求未挂载任何工具定义。",
+    auditH2: "出站请求头与密钥外泄审计",
+    thHdr: "请求头",
+    thVal: "观测值 / 脱敏转换值",
+    thAct: "防火墙动作",
+    emptyHdrs: "本轮未记录出站请求头。",
+    blockedTag: "已拦截 400",
+    secretPrefix: "已拦截密钥外泄：",
+    secretSuffix: " - 请求已在本地回环层阻断，未发送至上游网络。",
+    actions: {{
+      redacted: "已脱敏",
+      stripped: "已剥离",
+      normalized: "已归一化",
+      forwarded: "已放行"
+    }},
+    demoPrompts: {{
+      "Audit dist/ bundle for leaked source maps and non-system dylibs": "审计 dist/ 构建产物是否残留 source map 与非系统动态库",
+      "Read Package.swift and inspect Mach-O load commands": "读取 Package.swift 并检查 Mach-O 加载指令",
+      "Patch rpath flags in Scripts/build-app.sh and run test suite": "修复 Scripts/build-app.sh 中的 rpath 参数并运行测试套件",
+      "Verify codesign --strict output and summarize binary footprint": "校验 codesign --strict 签名结果并汇总二进制体积",
+      "cat .env.production && publish release notes": "cat .env.production && 发布版本说明",
+      "Disabled unused MCP servers - re-run release verification": "停用闲置 MCP 服务 - 重新执行发版校验"
+    }}
+  }}
+}};
 
 function fmt(n) {{
   return Number(n || 0).toLocaleString("en-US");
 }}
 
+function localizePrompt(raw) {{
+  const s = String(raw || "");
+  if (currentLang === "zh" && I18N.zh.demoPrompts[s]) {{
+    return I18N.zh.demoPrompts[s];
+  }}
+  return s;
+}}
+
+function localizeSecretRule(rule) {{
+  const s = String(rule || "");
+  if (currentLang !== "zh") return s;
+  const map = {{
+    "Anthropic API Key": "Anthropic API 密钥",
+    "OpenAI Project Key": "OpenAI 项目密钥",
+    "GitHub PAT": "GitHub 访问令牌",
+    "AWS Access Key ID": "AWS 访问密钥 ID",
+    "PEM Private Key": "PEM 私钥证书",
+    "Slack Token": "Slack 令牌"
+  }};
+  return map[s] || s;
+}}
+
+function localizeDisplayVal(val) {{
+  const s = String(val || "");
+  if (currentLang !== "zh") return s;
+  return s.replace(/\\((\\d+) chars\\)/g, "（共 $1 字符）");
+}}
+
 function syncModeLabel() {{
+  const t = I18N[currentLang];
   const isDark = document.documentElement.dataset.mode === "dark" ||
     (!document.documentElement.dataset.mode && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
   const btn = document.getElementById("mode-toggle");
-  if (btn) btn.textContent = isDark ? "Light paper" : "Dark theme";
+  if (btn) btn.textContent = isDark ? t.lightPaper : t.darkTheme;
 }}
 
 function toggleMode() {{
@@ -700,84 +960,233 @@ function setFilter(mode) {{
   render();
 }}
 
-function render() {{
-  syncModeLabel();
-  const s = DATA.summary || {{}};
-  const allTraces = DATA.traces || [];
-  if (selectedIdx >= allTraces.length) selectedIdx = Math.max(0, allTraces.length - 1);
+async function scanDesktopSessions() {{
+  const t = I18N[currentLang];
+  const btn = document.getElementById("scan-desktop-btn");
+  const bar = document.getElementById("scan-status-bar");
+  if (!IS_LIVE_POLL) {{
+    lastScanStatusKey = "offline";
+    bar.hidden = false;
+    bar.textContent = t.scanOfflineHint;
+    return;
+  }}
+  if (btn) {{
+    btn.disabled = true;
+    btn.textContent = t.scanningBtn;
+  }}
+  try {{
+    const res = await fetch("/_xray/api/scan-desktop", {{ method: "POST" }});
+    if (res.ok) {{
+      const payload = await res.json();
+      lastScanCount = Number(payload.imported || 0);
+      lastScanStatusKey = "live";
+      DATA = payload;
+      selectedIdx = Math.max(0, (DATA.traces || []).length - 1);
+      render();
+    }}
+  }} catch (_) {{
+    lastScanStatusKey = "offline";
+  }} finally {{
+    if (btn) {{
+      btn.disabled = false;
+      btn.textContent = I18N[currentLang].scanBtn;
+    }}
+    renderScanBanner();
+  }}
+}}
 
+function renderScanBanner() {{
+  const bar = document.getElementById("scan-status-bar");
+  if (!lastScanStatusKey) {{
+    bar.hidden = true;
+    return;
+  }}
+  const t = I18N[currentLang];
+  bar.hidden = false;
+  bar.textContent = lastScanStatusKey === "live"
+    ? t.scanLiveDone.replace("{{n}}", String(lastScanCount))
+    : t.scanOfflineHint;
+}}
+
+function syncSessionSelector(allTraces) {{
+  const t = I18N[currentLang];
+  const sel = document.getElementById("session-select");
+  const sessionsMap = new Map();
+  allTraces.forEach((tr) => {{
+    const sid = tr.session_id || ((tr.provider || "agent") + ":" + (tr.model || "unknown"));
+    sessionsMap.set(sid, (sessionsMap.get(sid) || 0) + 1);
+  }});
+  const prev = currentSession;
+  sel.innerHTML = "";
+  const optAll = document.createElement("option");
+  optAll.value = "all";
+  optAll.textContent = t.allSessions.replace("{{n}}", String(allTraces.length));
+  sel.appendChild(optAll);
+  sessionsMap.forEach((cnt, sid) => {{
+    const opt = document.createElement("option");
+    opt.value = sid;
+    opt.textContent = sid + " (" + cnt + ")";
+    sel.appendChild(opt);
+  }});
+  currentSession = sessionsMap.has(prev) ? prev : "all";
+  sel.value = currentSession;
+}}
+
+function setLang(lang, persist) {{
+  currentLang = lang === "zh" ? "zh" : "en";
+  document.documentElement.lang = currentLang === "zh" ? "zh-CN" : "en";
+  if (persist) {{
+    try {{ localStorage.setItem("xray-lang", currentLang); }} catch (_) {{}}
+  }}
+  document.querySelectorAll("[data-lang-switch]").forEach((btn) => {{
+    const active = btn.getAttribute("data-lang-switch") === currentLang;
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
+  }});
+  render();
+}}
+
+function render() {{
+  const t = I18N[currentLang];
+  document.title = t.docTitle;
+  document.getElementById("brand-sub").textContent = t.brandSub;
+  document.getElementById("scan-desktop-btn").textContent = t.scanBtn;
+  document.getElementById("flt-all").textContent = t.fltAll;
+  document.getElementById("flt-mcp").textContent = t.fltMcp;
+  document.getElementById("flt-blocked").textContent = t.fltBlocked;
+  document.getElementById("flame-heading").textContent = t.flameH2;
+  document.getElementById("leg-sys").textContent = t.legSys;
+  document.getElementById("leg-rules").textContent = t.legRules;
+  document.getElementById("leg-mcp").textContent = t.legMcp;
+  document.getElementById("leg-res").textContent = t.legRes;
+  document.getElementById("leg-conv").textContent = t.legConv;
+  document.getElementById("mcp-heading").textContent = t.mcpH2;
+  document.getElementById("th-ns").textContent = t.thNs;
+  document.getElementById("th-tools").textContent = t.thTools;
+  document.getElementById("th-tok-turn").textContent = t.thTokTurn;
+  document.getElementById("th-share").textContent = t.thShare;
+  document.getElementById("audit-heading").textContent = t.auditH2;
+  document.getElementById("th-hdr").textContent = t.thHdr;
+  document.getElementById("th-val").textContent = t.thVal;
+  document.getElementById("th-act").textContent = t.thAct;
+  syncModeLabel();
+  renderScanBanner();
+
+  const allTraces = DATA.traces || [];
+  syncSessionSelector(allTraces);
+
+  const sessionTraces = currentSession === "all"
+    ? allTraces.map((tr, idx) => ({{ t: tr, idx }}))
+    : allTraces
+        .map((tr, idx) => ({{ t: tr, idx }}))
+        .filter(({{ t: tr }}) => (tr.session_id || ((tr.provider || "agent") + ":" + (tr.model || "unknown"))) === currentSession);
+
+  if (selectedIdx >= allTraces.length) selectedIdx = Math.max(0, allTraces.length - 1);
+  if (sessionTraces.length && !sessionTraces.some(x => x.idx === selectedIdx)) {{
+    selectedIdx = sessionTraces[sessionTraces.length - 1].idx;
+  }}
+
+  const s = DATA.summary || {{}};
   const bt = s.bucket_totals || {{}};
-  const mcpPct = s.total_estimated_input > 0
-    ? Math.round((bt.mcp_and_tools / s.total_estimated_input) * 100)
-    : 0;
+  const mcpTok = Number(bt.mcp_and_tools || 0);
+  const totEst = Number(s.total_estimated_input || 0);
+  const mcpPct = totEst > 0 ? Math.round((mcpTok / totEst) * 100) : 0;
+  const actualIn = Number(s.total_actual_input || 0) || totEst;
+  const cacheHits = Number(s.total_cache_read || 0);
+  const cachePct = actualIn > 0 ? Math.round((cacheHits / actualIn) * 100) : 0;
+  const estCost = Number(s.estimated_cost_usd || 0);
+
+  const kpi1Sub = currentLang === "zh"
+    ? `预估成本 $${{estCost.toFixed(2)}} · 共 ${{allTraces.length}} 轮`
+    : `Est. cost $${{estCost.toFixed(2)}} · ${{allTraces.length}} turns`;
+  const kpi2Sub = currentLang === "zh"
+    ? `冗余工具定义 ${{fmt(mcpTok)}} tok`
+    : `${{fmt(mcpTok)}} waste schema tok`;
+  const kpi3Sub = currentLang === "zh"
+    ? `缓存命中读取 ${{fmt(cacheHits)}} tok`
+    : `${{fmt(cacheHits)}} cache hit tok`;
 
   document.getElementById("kpi-strip").innerHTML = `
     <div class="stat-cell">
-      <div class="stat-val mono">${{fmt(s.total_estimated_input)}}</div>
-      <div class="stat-lbl">Estimated prompt tokens</div>
+      <div class="stat-val mono">${{fmt(totEst)}}</div>
+      <div class="stat-lbl">${{escapeHtml(t.kpi1Lbl)}}</div>
+      <div class="stat-sub mono">${{escapeHtml(kpi1Sub)}}</div>
     </div>
     <div class="stat-cell">
       <div class="stat-val signal mono">${{mcpPct}}%</div>
-      <div class="stat-lbl">MCP schema share</div>
+      <div class="stat-lbl">${{escapeHtml(t.kpi2Lbl)}}</div>
+      <div class="stat-sub mono">${{escapeHtml(kpi2Sub)}}</div>
     </div>
     <div class="stat-cell">
-      <div class="stat-val mono">${{fmt(s.total_cache_read)}}</div>
-      <div class="stat-lbl">Prompt cache hits</div>
+      <div class="stat-val mono">${{cachePct}}%</div>
+      <div class="stat-lbl">${{escapeHtml(t.kpi3Lbl)}}</div>
+      <div class="stat-sub mono">${{escapeHtml(kpi3Sub)}}</div>
     </div>
     <div class="stat-cell">
       <div class="stat-val mono">${{fmt(s.stripped_header_count)}}</div>
-      <div class="stat-lbl">Telemetry headers stripped</div>
+      <div class="stat-lbl">${{escapeHtml(t.kpi4Lbl)}}</div>
+      <div class="stat-sub">${{escapeHtml(t.kpi4Sub)}}</div>
     </div>
     <div class="stat-cell">
       <div class="stat-val ${{s.blocked_count ? 'signal' : ''}} mono">${{s.blocked_count || 0}}</div>
-      <div class="stat-lbl">Blocked secret leaks</div>
+      <div class="stat-lbl">${{escapeHtml(t.kpi5Lbl)}}</div>
+      <div class="stat-sub">${{escapeHtml(t.kpi5Sub)}}</div>
     </div>
   `;
 
-  const visible = allTraces
-    .map((t, idx) => ({{ t, idx }}))
-    .filter(({{ t }}) => {{
-      if (currentFilter === "blocked") return Boolean(t.blocked);
-      if (currentFilter === "mcp") {{
-        const b = t.buckets || {{}};
-        return (b.mcp_and_tools || 0) / Math.max(1, b.total_estimated || 1) >= 0.35;
-      }}
-      return true;
-    }});
+  const visible = sessionTraces.filter(({{ t: tr }}) => {{
+    if (currentFilter === "blocked") return Boolean(tr.blocked);
+    if (currentFilter === "mcp") {{
+      const b = tr.buckets || {{}};
+      return (b.mcp_and_tools || 0) / Math.max(1, b.total_estimated || 1) >= 0.35;
+    }}
+    return true;
+  }});
 
-  document.getElementById("turn-subtitle").textContent =
-    visible.length === allTraces.length
-      ? `${{allTraces.length}} captured turns`
-      : `${{visible.length}} of ${{allTraces.length}} turns`;
+  if (currentLang === "zh") {{
+    document.getElementById("turn-subtitle").textContent =
+      visible.length === allTraces.length
+        ? `已捕获 ${{allTraces.length}} 轮请求`
+        : `显示 ${{visible.length}} / ${{allTraces.length}} 轮`;
+  }} else {{
+    document.getElementById("turn-subtitle").textContent =
+      visible.length === allTraces.length
+        ? `${{allTraces.length}} captured turns`
+        : `${{visible.length}} of ${{allTraces.length}} turns`;
+  }}
 
-  const maxTurnToks = Math.max(1, ...allTraces.map(t => (t.buckets && t.buckets.total_estimated) || 1));
+  const maxTurnToks = Math.max(1, ...allTraces.map(tr => (tr.buckets && tr.buckets.total_estimated) || 1));
   const rowsEl = document.getElementById("flame-rows");
   if (!visible.length) {{
-    rowsEl.innerHTML = `<div style="padding:28px 0;color:var(--color-muted)">No turns match the active filter yet. Launch an agent with <code class="mono">agent-xray run --open -- claude</code> to stream turns here.</div>`;
+    rowsEl.innerHTML = `<div style="padding:28px 0;color:var(--color-muted)">${{t.emptyTurns}}</div>`;
   }} else {{
-    rowsEl.innerHTML = visible.map(({{ t, idx }}) => {{
-      const b = t.buckets || {{}};
+    rowsEl.innerHTML = visible.map(({{ t: tr, idx }}) => {{
+      const b = tr.buckets || {{}};
       const tot = Math.max(1, b.total_estimated || 1);
       const scale = (tot / maxTurnToks) * 100;
       const segs = [
-        ["var(--b-sys)", b.system_prompt || 0],
-        ["var(--b-rules)", b.workspace_rules || 0],
-        ["var(--b-mcp)", b.mcp_and_tools || 0],
-        ["var(--b-results)", b.tool_results || 0],
-        ["var(--b-conv)", b.conversation || 0],
+        ["var(--b-sys)", b.system_prompt || 0, t.legSys],
+        ["var(--b-rules)", b.workspace_rules || 0, t.legRules],
+        ["var(--b-mcp)", b.mcp_and_tools || 0, t.legMcp],
+        ["var(--b-results)", b.tool_results || 0, t.legRes],
+        ["var(--b-conv)", b.conversation || 0, t.legConv],
       ];
       const barHtml = segs
         .filter(([, v]) => v > 0)
-        .map(([col, v]) => `<div class="seg" style="background:${{col}};width:${{((v / tot) * scale).toFixed(2)}}%"></div>`)
+        .map(([col, v, lbl]) => {{
+          const pct = Math.round((v / tot) * 100);
+          const tip = `${{lbl}}: ${{fmt(v)}} tok (${{pct}}%)`;
+          return `<div class="seg" title="${{escapeHtml(tip)}}" style="background:${{col}};width:${{((v / tot) * scale).toFixed(2)}}%"></div>`;
+        }})
         .join("");
-      const statusTag = t.blocked
-        ? `<span class="tag tag-signal">Blocked 400</span>`
-        : `<span>${{t.latency_ms}}&nbsp;ms</span>`;
-      const cls = ["turn-row", idx === selectedIdx ? "active" : "", t.blocked ? "blocked" : ""].filter(Boolean).join(" ");
+      const statusTag = tr.blocked
+        ? `<span class="tag tag-signal">${{escapeHtml(t.blockedTag)}}</span>`
+        : `<span>${{tr.latency_ms}}&nbsp;ms</span>`;
+      const cls = ["turn-row", idx === selectedIdx ? "active" : "", tr.blocked ? "blocked" : ""].filter(Boolean).join(" ");
+      const turnPrefix = currentLang === "zh" ? `第 ${{tr.turn_number}} 轮` : `Turn ${{tr.turn_number}}`;
       return `
         <button type="button" class="${{cls}}" onclick="selectTurn(${{idx}})">
           <div class="turn-top">
-            <div class="turn-title"><span class="turn-num tabular">Turn ${{t.turn_number}}</span>${{escapeHtml(t.prompt_preview || t.path)}}</div>
+            <div class="turn-title"><span class="turn-num tabular">${{turnPrefix}}</span>${{escapeHtml(localizePrompt(tr.prompt_preview || tr.path))}}</div>
             <div class="turn-metrics mono"><span>${{fmt(b.total_estimated)}}&nbsp;tok</span>${{statusTag}}</div>
           </div>
           <div class="bar-track">${{barHtml}}</div>
@@ -790,27 +1199,33 @@ function render() {{
   const wellEl = document.getElementById("turn-summary-well");
   if (cur) {{
     const cb = cur.buckets || {{}};
+    const wellTitle = currentLang === "zh"
+      ? `第 ${{cur.turn_number}} 轮上下文解剖`
+      : `Turn ${{cur.turn_number}} context anatomy`;
+    const turnCost = Number(cur.estimated_cost_usd || 0);
     wellEl.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
-        <strong style="font-size:13.5px">Turn ${{cur.turn_number}} context anatomy</strong>
-        <span class="mono" style="font-size:12px;color:var(--color-muted)">${{escapeHtml(cur.model)}} · ${{fmt(cb.total_estimated)}}&nbsp;tok</span>
+        <strong style="font-size:13.5px">${{wellTitle}}</strong>
+        <span class="mono" style="font-size:12px;color:var(--color-muted)">${{escapeHtml(cur.model)}} · ${{fmt(cb.total_estimated)}}&nbsp;tok · $${{turnCost.toFixed(4)}}</span>
       </div>
       <div class="well-grid">
-        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-sys)"></i>System</div><div class="v mono">${{fmt(cb.system_prompt)}}</div></div>
-        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-rules)"></i>Rules</div><div class="v mono">${{fmt(cb.workspace_rules)}}</div></div>
-        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-mcp)"></i>MCP</div><div class="v mono" style="color:var(--color-accent)">${{fmt(cb.mcp_and_tools)}}</div></div>
-        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-results)"></i>Outputs</div><div class="v mono">${{fmt(cb.tool_results)}}</div></div>
-        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-conv)"></i>Chat</div><div class="v mono">${{fmt(cb.conversation)}}</div></div>
+        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-sys)"></i>${{escapeHtml(t.wellSys)}}</div><div class="v mono">${{fmt(cb.system_prompt)}}</div></div>
+        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-rules)"></i>${{escapeHtml(t.wellRules)}}</div><div class="v mono">${{fmt(cb.workspace_rules)}}</div></div>
+        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-mcp)"></i>${{escapeHtml(t.wellMcp)}}</div><div class="v mono" style="color:var(--color-accent)">${{fmt(cb.mcp_and_tools)}}</div></div>
+        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-results)"></i>${{escapeHtml(t.wellRes)}}</div><div class="v mono">${{fmt(cb.tool_results)}}</div></div>
+        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-conv)"></i>${{escapeHtml(t.wellConv)}}</div><div class="v mono">${{fmt(cb.conversation)}}</div></div>
       </div>
     `;
   }} else {{
-    wellEl.innerHTML = `<div style="color:var(--color-muted);font-size:13px">Select a turn to inspect its context slice.</div>`;
+    wellEl.innerHTML = `<div style="color:var(--color-muted);font-size:13px">${{escapeHtml(t.emptyWell)}}</div>`;
   }}
 
   const curNamespaces = cur ? (cur.tool_namespaces || []) : [];
   const nsTotal = Math.max(1, curNamespaces.reduce((a, x) => a + (x.estimated_tokens || 0), 0));
   document.getElementById("mcp-share-badge").textContent = cur
-    ? `Turn ${{cur.turn_number}} · ${{fmt(cur.buckets.mcp_and_tools)}} tok`
+    ? (currentLang === "zh"
+        ? `第 ${{cur.turn_number}} 轮 · ${{fmt(cur.buckets.mcp_and_tools)}} tok`
+        : `Turn ${{cur.turn_number}} · ${{fmt(cur.buckets.mcp_and_tools)}} tok`)
     : "";
   document.getElementById("ns-tbody").innerHTML = curNamespaces.map(ns => {{
     const pct = Math.round(((ns.estimated_tokens || 0) / nsTotal) * 100);
@@ -829,17 +1244,17 @@ function render() {{
         </td>
       </tr>
     `;
-  }}).join("") || `<tr><td colspan="4" style="color:var(--color-muted)">No tool schemas attached on this turn.</td></tr>`;
+  }}).join("") || `<tr><td colspan="4" style="color:var(--color-muted)">${{escapeHtml(t.emptySchemas)}}</td></tr>`;
 
   document.getElementById("selected-turn-badge").textContent = cur
-    ? `Turn ${{cur.turn_number}}`
+    ? (currentLang === "zh" ? `第 ${{cur.turn_number}} 轮` : `Turn ${{cur.turn_number}}`)
     : "";
 
   const secBox = document.getElementById("secret-banner");
   if (cur && cur.secret_findings && cur.secret_findings.length) {{
-    secBox.innerHTML = `<div class="alert-banner"><strong>Secret egress intercepted:</strong> ` +
-      cur.secret_findings.map(f => `${{escapeHtml(f.rule)}} (<span class="mono">${{escapeHtml(f.redacted_snippet)}}</span>)`).join(", ") +
-      ` — upstream transmission aborted locally before leaving loopback.</div>`;
+    secBox.innerHTML = `<div class="alert-banner"><strong>${{escapeHtml(t.secretPrefix)}}</strong> ` +
+      cur.secret_findings.map(f => `${{escapeHtml(localizeSecretRule(f.rule))}} (<span class="mono">${{escapeHtml(localizeDisplayVal(f.redacted_snippet))}}</span>)`).join(", ") +
+      `${{escapeHtml(t.secretSuffix)}}</div>`;
   }} else {{
     secBox.innerHTML = "";
   }}
@@ -849,14 +1264,15 @@ function render() {{
     let tagCls = "tag";
     if (h.action === "stripped" || h.action === "normalized") tagCls = "tag tag-ok";
     if (h.action === "redacted") tagCls = "tag tag-warn";
+    const actTxt = (t.actions && t.actions[h.action]) || h.action;
     return `
       <tr>
         <td class="mono">${{escapeHtml(h.name)}}</td>
-        <td class="mono" style="color:var(--color-muted);font-size:12px">${{escapeHtml(h.display_value)}}</td>
-        <td class="num"><span class="${{tagCls}}">${{escapeHtml(h.action)}}</span></td>
+        <td class="mono" style="color:var(--color-muted);font-size:12px">${{escapeHtml(localizeDisplayVal(h.display_value))}}</td>
+        <td class="num"><span class="${{tagCls}}">${{escapeHtml(actTxt)}}</span></td>
       </tr>
     `;
-  }}).join("");
+  }}).join("") || `<tr><td colspan="3" style="color:var(--color-muted)">${{escapeHtml(t.emptyHdrs)}}</td></tr>`;
 }}
 
 function selectTurn(idx) {{
@@ -870,9 +1286,30 @@ function escapeHtml(s) {{
   }}[c]));
 }}
 
-render();
+document.getElementById("session-select").addEventListener("change", (ev) => {{
+  currentSession = ev.target.value || "all";
+  render();
+}});
 
-if ({poll_js}) {{
+(function initLocale() {{
+  const params = new URLSearchParams(window.location.search);
+  const qLang = (params.get("lang") || "").toLowerCase();
+  let savedLang = "";
+  try {{ savedLang = (localStorage.getItem("xray-lang") || "").toLowerCase(); }} catch (_) {{}}
+  const rootDefault = (document.documentElement.getAttribute("data-default-lang") || "auto").toLowerCase();
+  const navZh = ((navigator.language || "").toLowerCase().startsWith("zh"));
+
+  let initLang = "en";
+  if (qLang.startsWith("zh")) initLang = "zh";
+  else if (qLang.startsWith("en")) initLang = "en";
+  else if (savedLang === "zh" || savedLang === "en") initLang = savedLang;
+  else if (rootDefault === "zh" || rootDefault === "en") initLang = rootDefault;
+  else if (navZh) initLang = "zh";
+
+  setLang(initLang, false);
+}})();
+
+if (IS_LIVE_POLL) {{
   setInterval(async () => {{
     try {{
       const res = await fetch("/_xray/api/summary");

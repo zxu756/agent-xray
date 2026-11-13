@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-xray"
-version = "0.1.0"
+version = "0.2.0"
 description = "Zero-MITM-cert local streaming proxy & 5-bucket context token flamegraph inspector for AI coding agents"
 readme = "README.md"
 license = { text = "MIT" }
@@ -31,3 +31,12 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
