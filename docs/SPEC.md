@@ -1,70 +1,81 @@
-# agent-xray — Engineering Specification (`v0.1.0`)
+# agent-xray - Engineering Specification (`v0.2.0` M0 Honest Baseline)
 
-## 1. Problem Statement & Motivation
-Modern AI coding agents (Claude Code, Codex, OpenCode, Cursor/CLI harnesses) send massive multi-part JSON payloads on every turn. Developers routinely burn 30,000–80,000 input tokens per turn without realizing that:
-- Mounting multiple MCP servers (`mcp__rea__*`, `mcp__playwright__*`, `mcp__zotero__*`) injects tens of thousands of tokens of JSON Schema definitions on **every single turn**.
-- `AGENTS.md` / `CLAUDE.md` workspace rule injections and uncached tool outputs compound across multi-step loops.
-- Client SDKs attach detailed OS, CPU architecture, runtime, and telemetry headers (`x-stainless-os`, `x-stainless-arch`, `x-stainless-runtime-version`, verbose `User-Agent` strings), and pasted `.env` snippets or keys in tool outputs can leave the machine unnoticed.
+## 1. Problem Statement & Scope
+AI coding agents (`Claude Code`, `Codex`, `OpenCode`) send structured multi-part JSON payloads on every turn, including system instructions, workspace rule files (`AGENTS.md`, `CLAUDE.md`), MCP tool JSON Schemas, and tool execution results.
 
-Existing proxy tools either require invasive root CA certificates (`mitmproxy`), depend on heavy Node/Docker stacks, or log raw JSON blobs without understanding Coding Agent payload anatomy.
-
-**agent-xray** is a zero-dependency Python 3.10+ local loopback streaming proxy CLI and live browser inspector (`http://127.0.0.1:8788/_xray/`) that wraps any coding agent command with zero TLS MITM certificates.
+**agent-xray** is a zero-dependency Python 3.10+ local loopback HTTP/SSE proxy CLI and bilingual (`zh-CN` / `en`) Web inspector (`http://127.0.0.1:<port>/_xray/`) that wraps coding agent sessions via `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL` without requiring custom TLS root certificates.
 
 ---
 
-## 2. Core Capabilities
+## 2. Core Capabilities & Exact Formulas
 
-### 2.1 Zero-Cert Loopback Passthrough (`ANTHROPIC_BASE_URL` & `OPENAI_BASE_URL`)
-- Listens strictly on `127.0.0.1:<port>` (never `0.0.0.0`).
-- Routes `/anthropic/*` → `https://api.anthropic.com/*` (or `$AGENT_XRAY_ANTHROPIC_UPSTREAM`) and `/openai/*` → `https://api.openai.com/*` (or `$AGENT_XRAY_OPENAI_UPSTREAM`).
-- `agent-xray run [flags] -- <cmd...>` spawns the target CLI with `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL` pointed at the local loopback proxy and shuts down cleanly when the child process exits.
-- Preserves **chunk-by-chunk SSE (`text/event-stream`) streaming** with immediate socket flushing so interactive terminal output experiences zero buffering delay.
+### 2.1 Loopback Proxy & Inspector Security (`proxy.py`)
+- Binds `127.0.0.1:<port>` by default. Passing `--allow-lan` (`0.0.0.0`) requires an explicit `--auth-token <token>` or exits non-zero (`2`) before opening any database.
+- Routes `/anthropic/*` (or `/v1/messages`) to `$AGENT_XRAY_ANTHROPIC_UPSTREAM` (`https://api.anthropic.com`) and `/openai/*` to `$AGENT_XRAY_OPENAI_UPSTREAM` (`https://api.openai.com`).
+- **DNS-rebinding & CSRF protection**:
+  - Validates the `Host` header on all UI and `/_xray/api/*` requests (`127.0.0.1`, `localhost`, `[::1]` matching the bound port; returns HTTP `403` otherwise).
+  - Validates `Origin` (and `Referer` on `POST` when `Origin` is absent) against the allowed local origin (`HTTP 403` on cross-origin requests; zero wildcard CORS headers).
+  - Generates a cryptographic `secrets.token_urlsafe(24)` token at startup (printed to `stderr`) and requires `X-Xray-Token` or `Authorization: Bearer <token>` on all state-changing `POST` endpoints (`/_xray/api/scan-desktop`, `/_xray/api/clear`), as well as on `GET` UI/API reads when `--allow-lan` is active.
 
-### 2.2 Five-Bucket Context Token Flamegraph (`classifier.py`)
-Supports Anthropic Messages API (`/v1/messages`) and OpenAI Chat Completions / Responses APIs (`/v1/chat/completions`, `/v1/responses`). Every turn is decomposed into five token buckets:
-1. **`system_prompt`** — Core agent harness system prompt blocks.
-2. **`workspace_rules`** — `AGENTS.md`, `CLAUDE.md`, `<user_rules>`, `.cursorrules`, and `<system-reminder>` blocks detected inside system or developer messages.
-3. **`mcp_and_tools`** — Tool JSON Schema definitions (`tools[]`), further grouped by MCP server prefix (`mcp__<server>__<tool>`, `mcp_<server>.<tool>`, or `builtin`) to rank **Top Token-Hungry Tool Namespaces**.
-4. **`tool_results`** — `tool_result` blocks, `role: "tool"` messages, and `function_call_output` items (file reads, grep dumps, shell outputs).
-5. **`conversation`** — User prompts, assistant text, and thinking/reasoning blocks.
+### 2.2 Five-Bucket Context Token Classifier (`classifier.py`)
+Decomposes uncompressed JSON request payloads on `/v1/messages`, `/v1/chat/completions`, and `/v1/responses` into five buckets:
+1. **`system_prompt`** - Core agent harness instructions.
+2. **`workspace_rules`** - Blocks matching `AGENTS.md`, `CLAUDE.md`, `<user_rules>`, `.cursorrules`, `<system-reminder>`, or `copilot-instructions.md`.
+3. **`mcp_and_tools`** (`Tool Definition Tokens` / `工具定义占用`) - All `tools[]` JSON Schema definitions, grouped by namespace (`mcp:<server>` vs `builtin`). **`MCP Tool Share`** (`MCP 工具定义占比`) is strictly `mcp_tool_tokens / total_estimated_input`.
+4. **`tool_results`** - `tool_result` blocks, `role: "tool"` messages, and `function_call_output` items.
+5. **`conversation`** - User prompts, assistant responses, and reasoning blocks.
 
-Token estimation uses deterministic UTF-8 / code-aware subword heuristics (~3.8 chars/token for prose, ~3.2 chars/token for JSON schemas/code) reconciled against exact upstream `usage` (`input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `output_tokens`) as soon as the response or SSE stream finishes.
+### 2.3 Cache Hit Rate & Dated Per-Model Pricing (`store.py`)
+- **Prompt Cache Hit Rate**:
+  `cache_read_tokens / (input_tokens + cache_read_tokens + cache_write_tokens)` (`0.0` when denominator is `0`).
+  For OpenAI `/v1/chat/completions` and `/v1/responses`, `prompt_tokens` / `input_tokens` reported inclusive of `cached_tokens` are normalized to uncached `input_tokens = max(0, total_prompt - cached_tokens)` so `cached_tokens` are never double-counted.
+- **Per-Model Pricing (`PRICING_TABLE_DATE = "2026-11"`)**:
+  - Computes `(input * p_in + cache_read * p_read + cache_write * p_write + output * p_out) / 1_000_000` for recognized Anthropic (`claude-sonnet-*`, `claude-opus-*`, `claude-haiku-*`) and OpenAI (`gpt-4o*`, `gpt-4.1*`, `gpt-5*`, `o1*`, `o3*`, `o4-mini*`, `codex-mini*`) model families.
+  - Returns `None` (`null` in JSON, rendered as `Unknown price` / `未知价格`) when a model is not in `MODEL_PRICING_USD_PER_MTOK`.
+  - Returns `0.0` whenever `blocked == True` or `status_code >= 400`.
 
-### 2.3 Outbound Header Audit & Secret Egress Firewall (`privacy.py`)
-- **Credential Redaction Invariant**: `Authorization`, `x-api-key`, `Proxy-Authorization`, and cookie headers are **never** stored raw in memory rings or SQLite (`sk-ant-••••••••`).
-- **Telemetry & Fingerprint Header Audit**: Flags SDK/OS fingerprint headers (`x-stainless-*`, `x-client-data`, `openai-organization`, OS/arch tokens in `User-Agent`). Passing `--strip-telemetry-headers` removes telemetry headers and normalizes `User-Agent: agent-xray/0.1.0` before upstream forwarding.
-- **Secret Egress Guard (`--block-secrets`)**: Scans outbound user messages and tool outputs for accidental live credentials (`sk-ant-api03-...`, `sk-proj-...`, `ghp_...`, `github_pat_...`, `AKIA...`, PEM private keys). Matches are redacted in the trace log (`sk-ant… [REDACTED]`); when `--block-secrets` is enabled, the proxy aborts upstream transmission locally with HTTP `400` and a clear JSON error so the secret never leaves localhost.
+### 2.4 Outbound Header Audit & Pattern-Based Secret Guard (`privacy.py`)
+- **Header Persistence Rule**: `headers_json` stores **only** `name`, `value_length`, `category`, and `action` (`forwarded`, `redacted`, `normalized`, `stripped`). Raw or masked header values are never persisted. `stripped_header_count` counts strictly `action == "stripped"`.
+- **Prompt Preview Rule**: `prompt_preview` is `""` by default. When `--store-previews` is passed, `redact_secrets_in_text()` runs across the full text *before* truncating to 140 characters. Blocked turns (`400`) always store `prompt_preview = ""` and zeroed buckets, recording only `{"rule": ..., "field": ...}` in `secrets_json`.
+- **Secret Patterns**: Covers closed and unclosed multi-line PEM private key blocks, `sk-ant-...`, `sk-proj-...`/`sk-svcacct-...`, `sk-or-v1-...`, legacy `sk-...` tokens, `ghp_...`/`github_pat_...`, `AKIA...`, `xox[baprs]-...`, `AIza...`, and JWTs.
 
-### 2.4 Embedded Dark Fluoroscopy Inspector (`ui_html.py`)
-- Served at `http://127.0.0.1:<port>/_xray/` with JSON API `/_xray/api/summary` and `/_xray/api/traces`.
-- Offline static export via `agent-xray export-demo --out <file.html>` for reproducible sharing and documentation screenshots.
-- Visual hierarchy:
-  - **Turn-by-Turn Context Token Flamegraph**: Stacked horizontal bars across turns showing exact token growth and MCP schema overhead.
-  - **MCP Namespace Bloat Leaderboard**: Exact token cost and tool count per MCP server (`rea`, `playwright`, `scholar`, `builtin`).
-  - **Outbound Header & Egress Audit**: Side-by-side table of kept, redacted, and stripped outbound headers plus secret-scan status.
+### 2.5 Local Session Aggregate Import (`local_sessions.py`)
+- Reads per-turn assistant usage from `OpenCode Desktop` (`session_message` table, ignoring cumulative `session_v2` totals) and `Claude Code` (`~/.claude/projects/*/*.jsonl`, deduplicated by `(message.id, requestId)`).
+- Sets `has_bucket_breakdown = False` and zero bucket estimates because local transcripts do not store raw wire payloads; UI and CLI report `No data` / `没有数据` for 5-bucket metrics instead of fixed-ratio splits.
 
 ---
 
-## 3. Package Layout & CLI Surface
+## 3. Package Layout & CLI Commands
 ```text
 agent-xray/
+├── Scripts/
+│   ├── test.sh                 # Scoped unit test & milestone acceptance runner
+│   └── acceptance/             # M0 acceptance & README command verification scripts
 ├── docs/
 │   ├── SPEC.md
-│   └── screenshot.png
-├── pyproject.toml
+│   ├── demo-inspector.html     # Static [DEMO] HTML export
+│   ├── screenshot.png          # [DEMO] dataset screenshot (EN)
+│   └── screenshot-zh.png       # [DEMO] dataset screenshot (ZH)
 ├── src/agent_xray/
-│   ├── __init__.py
-│   ├── classifier.py     # 5-bucket Anthropic + OpenAI payload & SSE usage parser
-│   ├── privacy.py        # Header fingerprint auditor, stripper & secret scanner
-│   ├── store.py          # Redacted SQLite (0600) trace persistence
-│   ├── proxy.py          # Loopback ThreadingHTTPServer + streaming HTTPS forwarder
-│   ├── ui_html.py        # Self-contained dark fluoroscopy SPA + static demo renderer
-│   └── cli.py            # `run`, `serve`, `export-demo`, `report` commands
+│   ├── classifier.py           # 5-bucket JSON classifier & usage parser
+│   ├── cli.py                  # `run`, `serve`, `desktop`, `report`, `export-demo`, `purge-db`
+│   ├── i18n.py                 # Locale resolution, canonical labels & USD formatter
+│   ├── local_sessions.py       # Per-turn OpenCode & deduplicated Claude usage importer
+│   ├── privacy.py              # Length-only header auditor & recursive secret scanner
+│   ├── proxy.py                # Loopback server with Host/Origin/X-Xray-Token guards
+│   ├── store.py                # SQLite (0600) persistence, dated pricing & purge helper
+│   └── ui_html.py              # Bilingual Web UI with [DEMO] banner & honest labels
 └── tests/
-    └── test_xray.py      # Classifier, MCP ranking, privacy guard & live SSE proxy tests
+    ├── test_classifier.py
+    ├── test_cli.py
+    ├── test_desktop.py
+    ├── test_privacy.py
+    ├── test_proxy.py
+    ├── test_store.py
+    └── test_xray.py
 ```
 
-## 4. Security & Privacy Invariants
-1. Loopback bind (`127.0.0.1`) by default; refuses `0.0.0.0` unless `--allow-lan` is explicitly passed.
-2. SQLite database created with `0600` file permissions; raw API keys and matched secret literals are redacted *before* database insertion.
-3. Zero external network calls by `agent-xray` itself — only forwards requests initiated by the wrapped client to the configured LLM API upstream.
+## 4. Known M0 Boundaries (Deferred to M1)
+1. Upstream streaming currently uses `upstream_resp.read(4096)` rather than `read1()` non-buffering reads.
+2. Secret scanning inspects uncompressed JSON request bodies on `/v1/messages`, `/v1/chat/completions`, and `/v1/responses` (gzip request bodies, URL query parameters, and multipart `/v1/files` uploads are not decoded in M0).
+3. `run` sets `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL` without reading caller-supplied upstream URLs from those same variables prior to overwrite (use `AGENT_XRAY_ANTHROPIC_UPSTREAM` / `AGENT_XRAY_OPENAI_UPSTREAM` when pointing upstream elsewhere).

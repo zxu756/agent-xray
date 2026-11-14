@@ -1,4 +1,4 @@
-"""Bilingual (zh-CN / en) locale detection and formatting helpers for agent-xray."""
+"""Bilingual (zh-CN / en) locale detection, canonical metric labels, and formatting helpers."""
 
 from __future__ import annotations
 
@@ -6,6 +6,33 @@ from collections.abc import Mapping
 import os
 
 SUPPORTED_LANG_CHOICES = ("auto", "zh", "en")
+
+HONEST_LABELS: dict[str, dict[str, str]] = {
+    "en": {
+        "tool_definition_tokens": "Tool Definition Tokens",
+        "mcp_tool_share": "MCP Tool Share",
+        "cache_hit_rate": "Cache Hit Rate",
+        "stripped_telemetry_headers": "Stripped Telemetry Headers",
+        "unknown_price": "Unknown price",
+        "no_data": "No data",
+    },
+    "zh": {
+        "tool_definition_tokens": "工具定义占用",
+        "mcp_tool_share": "MCP 工具定义占比",
+        "cache_hit_rate": "缓存命中率",
+        "stripped_telemetry_headers": "去掉的遥测头",
+        "unknown_price": "未知价格",
+        "no_data": "没有数据",
+    },
+}
+
+
+def format_usd(cost_val: float) -> str:
+    """Format USD with at least 4 decimal places and up to 6 significant decimals."""
+    s6 = f"{float(cost_val):.6f}"
+    head, frac = s6.split(".")
+    frac_trimmed = frac[:4] + frac[4:].rstrip("0")
+    return f"${head}.{frac_trimmed}"
 
 
 def _parse_lang_tag(raw: str | None) -> str | None:

@@ -23,13 +23,16 @@ def render_inspector_html(
     *,
     live_poll: bool = False,
     lang: str = "auto",
+    auth_token: str = "",
 ) -> str:
     render_lang, default_lang_attr = resolve_html_lang_mode(lang)
     is_zh = render_lang == "zh"
     html_lang_attr = "zh-CN" if is_zh else "en"
 
     raw_json = _sanitize_dashes(json.dumps(dataset, ensure_ascii=False)).replace("</", "<\\/")
+    token_json = json.dumps(auth_token if live_poll else "").replace("</", "<\\/")
     poll_js = "true" if live_poll else "false"
+    init_scan_key_js = '""' if live_poll else '"offline"'
 
     doc_title = (
         "agent-xray · 上下文 Token 火焰图与出站隐私防火墙"
@@ -62,7 +65,7 @@ def render_inspector_html(
 
     audit_h2 = "出站请求头与密钥外泄审计" if is_zh else "Outbound header & secret egress audit"
     th_hdr = "请求头" if is_zh else "Header"
-    th_val = "观测值 / 脱敏转换值" if is_zh else "Observed / transformed value"
+    th_val = "值长度" if is_zh else "Value length"
     th_act = "防火墙动作" if is_zh else "Firewall action"
 
     zh_pressed = "true" if is_zh else "false"
@@ -73,7 +76,7 @@ def render_inspector_html(
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="description" content="Local context token flamegraph, MCP schema bloat leaderboard, and outbound header firewall inspector for AI coding agents." />
+<meta name="description" content="Local context token flamegraph, MCP tool definition token leaderboard, and outbound header firewall inspector for AI coding agents." />
 <title>{html.escape(doc_title)}</title>
 <script>
   try {{
@@ -83,7 +86,7 @@ def render_inspector_html(
 </script>
 <style>
   /* Hallmark v2.0.0 | genre: modern-minimal | scope: app | posture: restrained | modes: light+dark | data: sample */
-  /* critique: ledger workbench parted by hairlines rather than nested dark cards; vermilion argues MCP bloat against quiet mineral context layers. */
+  /* critique: ledger workbench parted by hairlines rather than nested dark cards; vermilion highlights MCP tool share against quiet mineral context layers. */
   :root {{
     color-scheme: light dark;
     --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", "Inter", system-ui, sans-serif;
@@ -111,13 +114,13 @@ def render_inspector_html(
     --b-sys: oklch(0.375 0.032 252);
     --b-rules: oklch(0.545 0.038 258);
     --b-mcp: oklch(0.555 0.195 30);
-    --b-results: oklch(0.515 0.092 188);
-    --b-conv: oklch(0.665 0.122 76);
+    --b-results: oklch(0.515 0.100 188);
+    --b-conv: oklch(0.665 0.119 76);
     --b-track: oklch(0.928 0.010 76);
 
-    --badge-ok-bg: oklch(0.515 0.092 188 / 0.12);
+    --badge-ok-bg: oklch(0.515 0.100 188 / 0.118);
     --badge-ok-ink: oklch(0.365 0.082 188);
-    --badge-warn-bg: oklch(0.665 0.122 76 / 0.16);
+    --badge-warn-bg: oklch(0.665 0.119 76 / 0.16);
     --badge-warn-ink: oklch(0.415 0.105 68);
     --badge-neutral-bg: oklch(0.205 0.012 65 / 0.06);
 
@@ -150,18 +153,18 @@ def render_inspector_html(
     --color-accent-ink: oklch(0.155 0.008 68);
     --color-accent-soft: oklch(0.665 0.175 32 / 0.15);
     --color-focus: oklch(0.685 0.175 32);
-    --color-selection: oklch(0.665 0.175 32 / 0.28);
+    --color-selection: oklch(0.665 0.175 32 / 0.275);
 
     --b-sys: oklch(0.615 0.045 250);
     --b-rules: oklch(0.735 0.048 258);
     --b-mcp: oklch(0.655 0.180 32);
     --b-results: oklch(0.685 0.100 185);
-    --b-conv: oklch(0.765 0.125 80);
+    --b-conv: oklch(0.765 0.119 80);
     --b-track: oklch(0.228 0.009 68);
 
     --badge-ok-bg: oklch(0.685 0.100 185 / 0.16);
-    --badge-ok-ink: oklch(0.795 0.095 185);
-    --badge-warn-bg: oklch(0.765 0.125 80 / 0.16);
+    --badge-ok-ink: oklch(0.795 0.100 185);
+    --badge-warn-bg: oklch(0.765 0.119 80 / 0.16);
     --badge-warn-ink: oklch(0.835 0.115 80);
     --badge-neutral-bg: oklch(0.938 0.008 78 / 0.08);
   }}
@@ -777,11 +780,12 @@ def render_inspector_html(
 <script>
 let DATA = {raw_json};
 const IS_LIVE_POLL = {poll_js};
+const XRAY_AUTH_TOKEN = {token_json};
 let selectedIdx = Math.max(0, (DATA.traces || []).length - 2);
 let currentFilter = "all";
 let currentSession = "all";
 let currentLang = "en";
-let lastScanStatusKey = "";
+let lastScanStatusKey = {init_scan_key_js};
 let lastScanCount = 0;
 
 const I18N = {{
@@ -791,7 +795,7 @@ const I18N = {{
     scanBtn: "Scan Desktop",
     scanningBtn: "Scanning...",
     scanLiveDone: "Imported {{n}} recent turns from local OpenCode Desktop & Claude transcripts.",
-    scanOfflineHint: "Static demo snapshot active. Run `agent-xray desktop --open` locally to scan live OpenCode & Claude sessions.",
+    scanOfflineHint: "[DEMO] Static demo snapshot active. Run `agent-xray desktop --open` locally to inspect live OpenCode & Claude sessions.",
     allSessions: "All sessions ({{n}})",
     fltAll: "All turns",
     fltMcp: "MCP heavy",
@@ -799,12 +803,20 @@ const I18N = {{
     darkTheme: "Dark theme",
     lightPaper: "Light paper",
     kpi1Lbl: "Estimated prompt tokens",
-    kpi2Lbl: "Context bloat (MCP share)",
+    kpi2Lbl: "MCP Tool Share",
     kpi3Lbl: "Prompt cache hit ratio",
     kpi4Lbl: "Telemetry headers stripped",
-    kpi4Sub: "SDK & OS fingerprints scrubbed",
+    kpi4Sub: "Removed telemetry headers only",
     kpi5Lbl: "Blocked secret leaks",
     kpi5Sub: "Aborted locally before egress",
+    noData: "No data",
+    unknownPrice: "Unknown price",
+    noBucketNote: "No 5-bucket breakdown (local session logs only record aggregate tokens)",
+    aggInput: "Uncached input",
+    aggCacheRead: "Cache read",
+    aggCacheWrite: "Cache write",
+    aggOutput: "Output",
+    aggHitRate: "Hit rate",
     flameH2: "Turn-by-turn context token flamegraph",
     legSys: "System prompt",
     legRules: "Workspace rules",
@@ -826,7 +838,7 @@ const I18N = {{
     emptySchemas: "No tool schemas attached on this turn.",
     auditH2: "Outbound header & secret egress audit",
     thHdr: "Header",
-    thVal: "Observed / transformed value",
+    thVal: "Value length",
     thAct: "Firewall action",
     emptyHdrs: "No outbound headers recorded for this turn.",
     blockedTag: "Blocked 400",
@@ -846,7 +858,7 @@ const I18N = {{
     scanBtn: "扫描桌面端",
     scanningBtn: "正在扫描...",
     scanLiveDone: "已从本地 OpenCode Desktop 与 Claude 会话日志导入 {{n}} 轮近期请求。",
-    scanOfflineHint: "当前为离线静态演示快照；在终端运行 `agent-xray desktop --open` 即可免代理扫描本机桌面会话。",
+    scanOfflineHint: "[DEMO / 演示数据] 当前为离线静态演示快照；在终端运行 `agent-xray desktop --open` 即可免代理查看本机桌面会话。",
     allSessions: "全部会话（{{n}} 轮）",
     fltAll: "全部轮次",
     fltMcp: "MCP 高占比",
@@ -854,12 +866,20 @@ const I18N = {{
     darkTheme: "深色主题",
     lightPaper: "浅色纸张",
     kpi1Lbl: "预估输入 Token 总量",
-    kpi2Lbl: "上下文膨胀率（MCP 占比）",
+    kpi2Lbl: "MCP 工具定义占比",
     kpi3Lbl: "提示词缓存命中率",
     kpi4Lbl: "已剥离遥测请求头",
-    kpi4Sub: "已清洗 SDK 与操作系统指纹",
+    kpi4Sub: "仅统计实际剥离的遥测头",
     kpi5Lbl: "已拦截密钥外泄",
     kpi5Sub: "出站前于本地回环层阻断",
+    noData: "没有数据",
+    unknownPrice: "未知价格",
+    noBucketNote: "没有五桶拆分数据（本地会话记录不含原始请求体）",
+    aggInput: "未缓存输入",
+    aggCacheRead: "缓存读取",
+    aggCacheWrite: "缓存写入",
+    aggOutput: "输出",
+    aggHitRate: "命中率",
     flameH2: "逐轮上下文 Token 构成火焰图",
     legSys: "系统提示词",
     legRules: "工作区规则",
@@ -881,7 +901,7 @@ const I18N = {{
     emptySchemas: "本轮请求未挂载任何工具定义。",
     auditH2: "出站请求头与密钥外泄审计",
     thHdr: "请求头",
-    thVal: "观测值 / 脱敏转换值",
+    thVal: "值长度",
     thAct: "防火墙动作",
     emptyHdrs: "本轮未记录出站请求头。",
     blockedTag: "已拦截 400",
@@ -898,7 +918,6 @@ const I18N = {{
       "Read Package.swift and inspect Mach-O load commands": "读取 Package.swift 并检查 Mach-O 加载指令",
       "Patch rpath flags in Scripts/build-app.sh and run test suite": "修复 Scripts/build-app.sh 中的 rpath 参数并运行测试套件",
       "Verify codesign --strict output and summarize binary footprint": "校验 codesign --strict 签名结果并汇总二进制体积",
-      "cat .env.production && publish release notes": "cat .env.production && 发布版本说明",
       "Disabled unused MCP servers - re-run release verification": "停用闲置 MCP 服务 - 重新执行发版校验"
     }}
   }}
@@ -906,6 +925,10 @@ const I18N = {{
 
 function fmt(n) {{
   return Number(n || 0).toLocaleString("en-US");
+}}
+
+function authHeaders() {{
+  return XRAY_AUTH_TOKEN ? {{ "X-Xray-Token": XRAY_AUTH_TOKEN }} : {{}};
 }}
 
 function localizePrompt(raw) {{
@@ -922,18 +945,33 @@ function localizeSecretRule(rule) {{
   const map = {{
     "Anthropic API Key": "Anthropic API 密钥",
     "OpenAI Project Key": "OpenAI 项目密钥",
+    "OpenRouter API Key": "OpenRouter API 密钥",
+    "OpenAI API Key": "OpenAI API 密钥",
     "GitHub PAT": "GitHub 访问令牌",
     "AWS Access Key ID": "AWS 访问密钥 ID",
     "PEM Private Key": "PEM 私钥证书",
-    "Slack Token": "Slack 令牌"
+    "Slack Token": "Slack 令牌",
+    "Google API Key": "Google API 密钥",
+    "JWT Token": "JWT 令牌"
   }};
   return map[s] || s;
 }}
 
-function localizeDisplayVal(val) {{
-  const s = String(val || "");
-  if (currentLang !== "zh") return s;
-  return s.replace(/\\((\\d+) chars\\)/g, "（共 $1 字符）");
+function formatHeaderLen(h) {{
+  const len = Number(h.value_length || 0);
+  return currentLang === "zh" ? `${{len}} 字符` : `${{len}} chars`;
+}}
+
+function formatUsdValue(costVal) {{
+  const s6 = Number(costVal).toFixed(6);
+  const parts = s6.split(".");
+  const frac = parts[1].slice(0, 4) + parts[1].slice(4).replace(/0+$/, "");
+  return `$${{parts[0]}}.${{frac}}`;
+}}
+
+function formatTurnCost(costVal, t) {{
+  if (costVal === null || costVal === undefined) return t.unknownPrice;
+  return formatUsdValue(costVal);
 }}
 
 function syncModeLabel() {{
@@ -975,7 +1013,7 @@ async function scanDesktopSessions() {{
     btn.textContent = t.scanningBtn;
   }}
   try {{
-    const res = await fetch("/_xray/api/scan-desktop", {{ method: "POST" }});
+    const res = await fetch("/_xray/api/scan-desktop", {{ method: "POST", headers: authHeaders() }});
     if (res.ok) {{
       const payload = await res.json();
       lastScanCount = Number(payload.imported || 0);
@@ -1087,32 +1125,49 @@ function render() {{
 
   const s = DATA.summary || {{}};
   const bt = s.bucket_totals || {{}};
-  const mcpTok = Number(bt.mcp_and_tools || 0);
+  const toolDefTok = Number(s.tool_definition_tokens !== undefined ? s.tool_definition_tokens : (bt.mcp_and_tools || 0));
+  const mcpOnlyTok = Number(s.mcp_tool_tokens !== undefined ? s.mcp_tool_tokens : toolDefTok);
   const totEst = Number(s.total_estimated_input || 0);
-  const mcpPct = totEst > 0 ? Math.round((mcpTok / totEst) * 100) : 0;
-  const actualIn = Number(s.total_actual_input || 0) || totEst;
-  const cacheHits = Number(s.total_cache_read || 0);
-  const cachePct = actualIn > 0 ? Math.round((cacheHits / actualIn) * 100) : 0;
-  const estCost = Number(s.estimated_cost_usd || 0);
+  const hasAnyBuckets = allTraces.some(tr => tr.has_bucket_breakdown !== false && (tr.buckets && tr.buckets.total_estimated > 0));
+  const mcpPctStr = totEst > 0 ? `${{Math.round((mcpOnlyTok / totEst) * 100)}}%` : t.noData;
 
+  const actualIn = Number(s.total_actual_input || 0);
+  const cacheHits = Number(s.total_cache_read || 0);
+  const cacheWrites = Number(s.total_cache_write || 0);
+  const promptDenom = actualIn + cacheHits + cacheWrites;
+  const cachePct = promptDenom > 0 ? Math.round((cacheHits / promptDenom) * 100) : 0;
+
+  const pricingDate = s.pricing_date || "2026-11";
+  const unknownTurns = Number(s.unknown_price_turn_count || 0);
+  let costLabel = "";
+  if (s.estimated_cost_usd === null || s.estimated_cost_usd === undefined) {{
+    costLabel = t.unknownPrice;
+  }} else {{
+    const baseCost = formatUsdValue(s.estimated_cost_usd);
+    costLabel = unknownTurns > 0
+      ? (currentLang === "zh" ? `${{baseCost}}（+${{unknownTurns}} 轮未知价格）` : `${{baseCost}} (+${{unknownTurns}} unknown price)`)
+      : `${{baseCost}} (${{pricingDate}})`;
+  }}
+
+  const kpi1ValStr = (totEst > 0 || allTraces.length === 0 || hasAnyBuckets) ? fmt(totEst) : t.noData;
   const kpi1Sub = currentLang === "zh"
-    ? `预估成本 $${{estCost.toFixed(2)}} · 共 ${{allTraces.length}} 轮`
-    : `Est. cost $${{estCost.toFixed(2)}} · ${{allTraces.length}} turns`;
+    ? `${{costLabel}} · 共 ${{allTraces.length}} 轮`
+    : `${{costLabel}} · ${{allTraces.length}} turns`;
   const kpi2Sub = currentLang === "zh"
-    ? `冗余工具定义 ${{fmt(mcpTok)}} tok`
-    : `${{fmt(mcpTok)}} waste schema tok`;
+    ? `工具定义占用：${{totEst > 0 ? fmt(toolDefTok) + ' tok' : t.noData}}`
+    : `Tool Definition Tokens: ${{totEst > 0 ? fmt(toolDefTok) + ' tok' : t.noData}}`;
   const kpi3Sub = currentLang === "zh"
-    ? `缓存命中读取 ${{fmt(cacheHits)}} tok`
-    : `${{fmt(cacheHits)}} cache hit tok`;
+    ? `缓存命中读取 ${{fmt(cacheHits)}} / ${{fmt(promptDenom)}} tok`
+    : `${{fmt(cacheHits)}} / ${{fmt(promptDenom)}} prompt tok`;
 
   document.getElementById("kpi-strip").innerHTML = `
     <div class="stat-cell">
-      <div class="stat-val mono">${{fmt(totEst)}}</div>
+      <div class="stat-val mono">${{escapeHtml(kpi1ValStr)}}</div>
       <div class="stat-lbl">${{escapeHtml(t.kpi1Lbl)}}</div>
       <div class="stat-sub mono">${{escapeHtml(kpi1Sub)}}</div>
     </div>
     <div class="stat-cell">
-      <div class="stat-val signal mono">${{mcpPct}}%</div>
+      <div class="stat-val signal mono">${{escapeHtml(mcpPctStr)}}</div>
       <div class="stat-lbl">${{escapeHtml(t.kpi2Lbl)}}</div>
       <div class="stat-sub mono">${{escapeHtml(kpi2Sub)}}</div>
     </div>
@@ -1136,6 +1191,7 @@ function render() {{
   const visible = sessionTraces.filter(({{ t: tr }}) => {{
     if (currentFilter === "blocked") return Boolean(tr.blocked);
     if (currentFilter === "mcp") {{
+      if (tr.has_bucket_breakdown === false) return false;
       const b = tr.buckets || {{}};
       return (b.mcp_and_tools || 0) / Math.max(1, b.total_estimated || 1) >= 0.35;
     }}
@@ -1161,6 +1217,27 @@ function render() {{
   }} else {{
     rowsEl.innerHTML = visible.map(({{ t: tr, idx }}) => {{
       const b = tr.buckets || {{}};
+      const u = tr.usage || {{}};
+      const statusTag = tr.blocked
+        ? `<span class="tag tag-signal">${{escapeHtml(t.blockedTag)}}</span>`
+        : `<span>${{tr.latency_ms}}&nbsp;ms</span>`;
+      const cls = ["turn-row", idx === selectedIdx ? "active" : "", tr.blocked ? "blocked" : ""].filter(Boolean).join(" ");
+      const turnPrefix = currentLang === "zh" ? `第 ${{tr.turn_number}} 轮` : `Turn ${{tr.turn_number}}`;
+      const titleTxt = localizePrompt(tr.prompt_preview || tr.path);
+
+      if (tr.has_bucket_breakdown === false) {{
+        const realPromptTok = Number(u.input_tokens || 0) + Number(u.cache_read_tokens || 0) + Number(u.cache_write_tokens || 0);
+        return `
+          <button type="button" class="${{cls}}" onclick="selectTurn(${{idx}})">
+            <div class="turn-top">
+              <div class="turn-title"><span class="turn-num tabular">${{turnPrefix}}</span>${{escapeHtml(titleTxt)}}</div>
+              <div class="turn-metrics mono"><span>${{fmt(realPromptTok)}}&nbsp;tok</span>${{statusTag}}</div>
+            </div>
+            <div style="font-size:12px;color:var(--color-muted)">${{escapeHtml(t.noBucketNote)}}</div>
+          </button>
+        `;
+      }}
+
       const tot = Math.max(1, b.total_estimated || 1);
       const scale = (tot / maxTurnToks) * 100;
       const segs = [
@@ -1178,15 +1255,10 @@ function render() {{
           return `<div class="seg" title="${{escapeHtml(tip)}}" style="background:${{col}};width:${{((v / tot) * scale).toFixed(2)}}%"></div>`;
         }})
         .join("");
-      const statusTag = tr.blocked
-        ? `<span class="tag tag-signal">${{escapeHtml(t.blockedTag)}}</span>`
-        : `<span>${{tr.latency_ms}}&nbsp;ms</span>`;
-      const cls = ["turn-row", idx === selectedIdx ? "active" : "", tr.blocked ? "blocked" : ""].filter(Boolean).join(" ");
-      const turnPrefix = currentLang === "zh" ? `第 ${{tr.turn_number}} 轮` : `Turn ${{tr.turn_number}}`;
       return `
         <button type="button" class="${{cls}}" onclick="selectTurn(${{idx}})">
           <div class="turn-top">
-            <div class="turn-title"><span class="turn-num tabular">${{turnPrefix}}</span>${{escapeHtml(localizePrompt(tr.prompt_preview || tr.path))}}</div>
+            <div class="turn-title"><span class="turn-num tabular">${{turnPrefix}}</span>${{escapeHtml(titleTxt)}}</div>
             <div class="turn-metrics mono"><span>${{fmt(b.total_estimated)}}&nbsp;tok</span>${{statusTag}}</div>
           </div>
           <div class="bar-track">${{barHtml}}</div>
@@ -1199,23 +1271,47 @@ function render() {{
   const wellEl = document.getElementById("turn-summary-well");
   if (cur) {{
     const cb = cur.buckets || {{}};
+    const cu = cur.usage || {{}};
     const wellTitle = currentLang === "zh"
       ? `第 ${{cur.turn_number}} 轮上下文解剖`
       : `Turn ${{cur.turn_number}} context anatomy`;
-    const turnCost = Number(cur.estimated_cost_usd || 0);
-    wellEl.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
-        <strong style="font-size:13.5px">${{wellTitle}}</strong>
-        <span class="mono" style="font-size:12px;color:var(--color-muted)">${{escapeHtml(cur.model)}} · ${{fmt(cb.total_estimated)}}&nbsp;tok · $${{turnCost.toFixed(4)}}</span>
-      </div>
-      <div class="well-grid">
-        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-sys)"></i>${{escapeHtml(t.wellSys)}}</div><div class="v mono">${{fmt(cb.system_prompt)}}</div></div>
-        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-rules)"></i>${{escapeHtml(t.wellRules)}}</div><div class="v mono">${{fmt(cb.workspace_rules)}}</div></div>
-        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-mcp)"></i>${{escapeHtml(t.wellMcp)}}</div><div class="v mono" style="color:var(--color-accent)">${{fmt(cb.mcp_and_tools)}}</div></div>
-        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-results)"></i>${{escapeHtml(t.wellRes)}}</div><div class="v mono">${{fmt(cb.tool_results)}}</div></div>
-        <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-conv)"></i>${{escapeHtml(t.wellConv)}}</div><div class="v mono">${{fmt(cb.conversation)}}</div></div>
-      </div>
-    `;
+    const turnCostStr = formatTurnCost(cur.estimated_cost_usd, t);
+    if (cur.has_bucket_breakdown === false) {{
+      const uIn = Number(cu.input_tokens || 0);
+      const uCr = Number(cu.cache_read_tokens || 0);
+      const uCw = Number(cu.cache_write_tokens || 0);
+      const uOut = Number(cu.output_tokens || 0);
+      const uDenom = uIn + uCr + uCw;
+      const uHit = uDenom > 0 ? Math.round((uCr / uDenom) * 100) : 0;
+      wellEl.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+          <strong style="font-size:13.5px">${{wellTitle}}</strong>
+          <span class="mono" style="font-size:12px;color:var(--color-muted)">${{escapeHtml(cur.model)}} · ${{fmt(uDenom)}}&nbsp;tok · ${{escapeHtml(turnCostStr)}}</span>
+        </div>
+        <div style="margin-top:6px;font-size:12.5px;color:var(--color-muted)">${{escapeHtml(t.noBucketNote)}}</div>
+        <div class="well-grid">
+          <div class="well-stat"><div class="k">${{escapeHtml(t.aggInput)}}</div><div class="v mono">${{fmt(uIn)}}</div></div>
+          <div class="well-stat"><div class="k">${{escapeHtml(t.aggCacheRead)}}</div><div class="v mono">${{fmt(uCr)}}</div></div>
+          <div class="well-stat"><div class="k">${{escapeHtml(t.aggCacheWrite)}}</div><div class="v mono">${{fmt(uCw)}}</div></div>
+          <div class="well-stat"><div class="k">${{escapeHtml(t.aggOutput)}}</div><div class="v mono">${{fmt(uOut)}}</div></div>
+          <div class="well-stat"><div class="k">${{escapeHtml(t.aggHitRate)}}</div><div class="v mono">${{uHit}}%</div></div>
+        </div>
+      `;
+    }} else {{
+      wellEl.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+          <strong style="font-size:13.5px">${{wellTitle}}</strong>
+          <span class="mono" style="font-size:12px;color:var(--color-muted)">${{escapeHtml(cur.model)}} · ${{fmt(cb.total_estimated)}}&nbsp;tok · ${{escapeHtml(turnCostStr)}}</span>
+        </div>
+        <div class="well-grid">
+          <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-sys)"></i>${{escapeHtml(t.wellSys)}}</div><div class="v mono">${{fmt(cb.system_prompt)}}</div></div>
+          <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-rules)"></i>${{escapeHtml(t.wellRules)}}</div><div class="v mono">${{fmt(cb.workspace_rules)}}</div></div>
+          <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-mcp)"></i>${{escapeHtml(t.wellMcp)}}</div><div class="v mono" style="color:var(--color-accent)">${{fmt(cb.mcp_and_tools)}}</div></div>
+          <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-results)"></i>${{escapeHtml(t.wellRes)}}</div><div class="v mono">${{fmt(cb.tool_results)}}</div></div>
+          <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-conv)"></i>${{escapeHtml(t.wellConv)}}</div><div class="v mono">${{fmt(cb.conversation)}}</div></div>
+        </div>
+      `;
+    }}
   }} else {{
     wellEl.innerHTML = `<div style="color:var(--color-muted);font-size:13px">${{escapeHtml(t.emptyWell)}}</div>`;
   }}
@@ -1223,9 +1319,11 @@ function render() {{
   const curNamespaces = cur ? (cur.tool_namespaces || []) : [];
   const nsTotal = Math.max(1, curNamespaces.reduce((a, x) => a + (x.estimated_tokens || 0), 0));
   document.getElementById("mcp-share-badge").textContent = cur
-    ? (currentLang === "zh"
-        ? `第 ${{cur.turn_number}} 轮 · ${{fmt(cur.buckets.mcp_and_tools)}} tok`
-        : `Turn ${{cur.turn_number}} · ${{fmt(cur.buckets.mcp_and_tools)}} tok`)
+    ? (cur.has_bucket_breakdown === false
+        ? t.noData
+        : (currentLang === "zh"
+            ? `第 ${{cur.turn_number}} 轮 · ${{fmt(cur.buckets.mcp_and_tools)}} tok`
+            : `Turn ${{cur.turn_number}} · ${{fmt(cur.buckets.mcp_and_tools)}} tok`))
     : "";
   document.getElementById("ns-tbody").innerHTML = curNamespaces.map(ns => {{
     const pct = Math.round(((ns.estimated_tokens || 0) / nsTotal) * 100);
@@ -1253,7 +1351,12 @@ function render() {{
   const secBox = document.getElementById("secret-banner");
   if (cur && cur.secret_findings && cur.secret_findings.length) {{
     secBox.innerHTML = `<div class="alert-banner"><strong>${{escapeHtml(t.secretPrefix)}}</strong> ` +
-      cur.secret_findings.map(f => `${{escapeHtml(localizeSecretRule(f.rule))}} (<span class="mono">${{escapeHtml(localizeDisplayVal(f.redacted_snippet))}}</span>)`).join(", ") +
+      cur.secret_findings.map(f => {{
+        const loc = f.field || "body";
+        return currentLang === "zh"
+          ? `${{escapeHtml(localizeSecretRule(f.rule))}}（位于 <span class="mono">${{escapeHtml(loc)}}</span>）`
+          : `${{escapeHtml(localizeSecretRule(f.rule))}} (in <span class="mono">${{escapeHtml(loc)}}</span>)`;
+      }}).join(", ") +
       `${{escapeHtml(t.secretSuffix)}}</div>`;
   }} else {{
     secBox.innerHTML = "";
@@ -1268,7 +1371,7 @@ function render() {{
     return `
       <tr>
         <td class="mono">${{escapeHtml(h.name)}}</td>
-        <td class="mono" style="color:var(--color-muted);font-size:12px">${{escapeHtml(localizeDisplayVal(h.display_value))}}</td>
+        <td class="mono" style="color:var(--color-muted);font-size:12px">${{escapeHtml(formatHeaderLen(h))}}</td>
         <td class="num"><span class="${{tagCls}}">${{escapeHtml(actTxt)}}</span></td>
       </tr>
     `;
@@ -1312,7 +1415,7 @@ document.getElementById("session-select").addEventListener("change", (ev) => {{
 if (IS_LIVE_POLL) {{
   setInterval(async () => {{
     try {{
-      const res = await fetch("/_xray/api/summary");
+      const res = await fetch("/_xray/api/summary", {{ headers: authHeaders() }});
       if (res.ok) {{
         DATA = await res.json();
         render();

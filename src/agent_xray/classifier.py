@@ -7,6 +7,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from .privacy import redact_secrets_in_text
+
 WORKSPACE_RULE_MARKERS = (
     "agents.md",
     "claude.md",
@@ -112,16 +114,27 @@ def _is_workspace_rule_text(text: str) -> bool:
     return any(marker in lower for marker in WORKSPACE_RULE_MARKERS)
 
 
-def classify_request_payload(path: str, payload: dict[str, Any]) -> TurnClassification:
+def _build_redacted_preview(raw_text: str, *, store_previews: bool) -> str:
+    if not store_previews or not raw_text:
+        return ""
+    return redact_secrets_in_text(raw_text).strip()[:140]
+
+
+def classify_request_payload(
+    path: str,
+    payload: dict[str, Any],
+    *,
+    store_previews: bool = False,
+) -> TurnClassification:
     """Classifies Anthropic Messages or OpenAI Chat/Responses JSON payloads into 5 buckets."""
     lower_path = path.lower()
     is_anthropic = "messages" in lower_path and ("anthropic" in lower_path or "system" in payload or "max_tokens" in payload)
     if is_anthropic and "input" not in payload:
-        return _classify_anthropic(payload)
-    return _classify_openai(payload)
+        return _classify_anthropic(payload, store_previews=store_previews)
+    return _classify_openai(payload, store_previews=store_previews)
 
 
-def _classify_anthropic(payload: dict[str, Any]) -> TurnClassification:
+def _classify_anthropic(payload: dict[str, Any], *, store_previews: bool = False) -> TurnClassification:
     buckets = Buckets()
     cache_breakpoints = 0
     model = str(payload.get("model") or "claude-unknown")
@@ -178,8 +191,8 @@ def _classify_anthropic(payload: dict[str, Any]) -> TurnClassification:
                 buckets.workspace_rules += toks
             else:
                 buckets.conversation += toks
-                if role == "user":
-                    last_user_preview = content.strip()[:140]
+                if role == "user" and store_previews and content.strip():
+                    last_user_preview = _build_redacted_preview(content, store_previews=True)
         elif isinstance(content, list):
             for part in content:
                 if not isinstance(part, dict):
@@ -198,8 +211,8 @@ def _classify_anthropic(payload: dict[str, Any]) -> TurnClassification:
                         buckets.workspace_rules += estimate_tokens(txt)
                     else:
                         buckets.conversation += estimate_tokens(txt)
-                        if role == "user" and txt.strip():
-                            last_user_preview = txt.strip()[:140]
+                        if role == "user" and store_previews and txt.strip():
+                            last_user_preview = _build_redacted_preview(txt, store_previews=True)
 
     sorted_ns = sorted(ns_map.values(), key=lambda s: s.estimated_tokens, reverse=True)
     return TurnClassification(
@@ -214,7 +227,7 @@ def _classify_anthropic(payload: dict[str, Any]) -> TurnClassification:
     )
 
 
-def _classify_openai(payload: dict[str, Any]) -> TurnClassification:
+def _classify_openai(payload: dict[str, Any], *, store_previews: bool = False) -> TurnClassification:
     buckets = Buckets()
     model = str(payload.get("model") or "gpt-unknown")
     stream = bool(payload.get("stream", False))
@@ -243,7 +256,7 @@ def _classify_openai(payload: dict[str, Any]) -> TurnClassification:
     if isinstance(items, str):
         buckets.conversation += estimate_tokens(items)
         items_list: list[Any] = [items]
-        preview = items.strip()[:140]
+        preview = _build_redacted_preview(items, store_previews=store_previews)
     else:
         items_list = list(items) if isinstance(items, list) else []
         preview = ""
@@ -268,8 +281,8 @@ def _classify_openai(payload: dict[str, Any]) -> TurnClassification:
                 buckets.workspace_rules += estimate_tokens(text_repr)
             else:
                 buckets.conversation += estimate_tokens(text_repr)
-                if role == "user" and isinstance(content, str) and content.strip():
-                    preview = content.strip()[:140]
+                if role == "user" and store_previews and isinstance(content, str) and content.strip():
+                    preview = _build_redacted_preview(content, store_previews=True)
 
     sorted_ns = sorted(ns_map.values(), key=lambda s: s.estimated_tokens, reverse=True)
     return TurnClassification(
@@ -324,10 +337,31 @@ def parse_usage_from_response(raw_body: bytes, is_sse: bool) -> dict[str, int]:
 
 
 def _merge_usage_dict(target: dict[str, int], u: dict[str, Any]) -> None:
-    if "input_tokens" in u and isinstance(u["input_tokens"], int):
-        target["input_tokens"] = max(target["input_tokens"], u["input_tokens"])
-    if "prompt_tokens" in u and isinstance(u["prompt_tokens"], int):
-        target["input_tokens"] = max(target["input_tokens"], u["prompt_tokens"])
+    details = u.get("prompt_tokens_details") or u.get("input_tokens_details")
+    openai_cached = (
+        int(details["cached_tokens"])
+        if isinstance(details, dict) and isinstance(details.get("cached_tokens"), int)
+        else None
+    )
+    has_anthropic_cache = (
+        "cache_read_input_tokens" in u or "cache_creation_input_tokens" in u
+    )
+
+    if openai_cached is not None and not has_anthropic_cache:
+        raw_prompt = 0
+        if "prompt_tokens" in u and isinstance(u["prompt_tokens"], int):
+            raw_prompt = u["prompt_tokens"]
+        elif "input_tokens" in u and isinstance(u["input_tokens"], int):
+            raw_prompt = u["input_tokens"]
+        uncached = max(0, raw_prompt - openai_cached)
+        target["input_tokens"] = max(target["input_tokens"], uncached)
+        target["cache_read_tokens"] = max(target["cache_read_tokens"], openai_cached)
+    else:
+        if "input_tokens" in u and isinstance(u["input_tokens"], int):
+            target["input_tokens"] = max(target["input_tokens"], u["input_tokens"])
+        if "prompt_tokens" in u and isinstance(u["prompt_tokens"], int):
+            target["input_tokens"] = max(target["input_tokens"], u["prompt_tokens"])
+
     if "output_tokens" in u and isinstance(u["output_tokens"], int):
         target["output_tokens"] = max(target["output_tokens"], u["output_tokens"])
     if "completion_tokens" in u and isinstance(u["completion_tokens"], int):
@@ -336,6 +370,3 @@ def _merge_usage_dict(target: dict[str, int], u: dict[str, Any]) -> None:
         target["cache_read_tokens"] = max(target["cache_read_tokens"], u["cache_read_input_tokens"])
     if "cache_creation_input_tokens" in u and isinstance(u["cache_creation_input_tokens"], int):
         target["cache_write_tokens"] = max(target["cache_write_tokens"], u["cache_creation_input_tokens"])
-    details = u.get("prompt_tokens_details") or u.get("input_tokens_details")
-    if isinstance(details, dict) and isinstance(details.get("cached_tokens"), int):
-        target["cache_read_tokens"] = max(target["cache_read_tokens"], details["cached_tokens"])

@@ -93,17 +93,24 @@ class AgentXRayTests(unittest.TestCase):
         }
         res = classify_request_payload("/anthropic/v1/messages", payload)
         self.assertEqual(res.provider, "anthropic")
-        self.assertGreater(res.buckets.system_prompt, 0)
-        self.assertGreater(res.buckets.workspace_rules, 0)
-        self.assertGreater(res.buckets.mcp_and_tools, 0)
-        self.assertGreater(res.buckets.tool_results, 0)
-        self.assertGreater(res.buckets.conversation, 0)
+        self.assertEqual(
+            res.buckets.to_dict(),
+            {
+                "system_prompt": 10,
+                "workspace_rules": 19,
+                "mcp_and_tools": 123,
+                "tool_results": 13,
+                "conversation": 7,
+                "total_estimated": 172,
+            },
+        )
+        self.assertEqual(res.prompt_preview, "")
         self.assertEqual(res.cache_breakpoint_count, 1)
 
-        ns_map = {n.namespace: n.tool_count for n in res.tool_namespaces}
-        self.assertEqual(ns_map["mcp:rea"], 2)
-        self.assertEqual(ns_map["mcp:playwright"], 1)
-        self.assertEqual(ns_map["builtin"], 1)
+        ns_map = {n.namespace: (n.tool_count, n.estimated_tokens) for n in res.tool_namespaces}
+        self.assertEqual(ns_map["mcp:rea"], (2, 64))
+        self.assertEqual(ns_map["mcp:playwright"], (1, 33))
+        self.assertEqual(ns_map["builtin"], (1, 26))
 
     def test_openai_responses_classification(self) -> None:
         payload = {
@@ -120,9 +127,17 @@ class AgentXRayTests(unittest.TestCase):
         }
         res = classify_request_payload("/openai/v1/responses", payload)
         self.assertEqual(res.provider, "openai")
-        self.assertGreater(res.buckets.workspace_rules, 0)
-        self.assertGreater(res.buckets.system_prompt, 0)
-        self.assertGreater(res.buckets.tool_results, 0)
+        self.assertEqual(
+            res.buckets.to_dict(),
+            {
+                "system_prompt": 6,
+                "workspace_rules": 11,
+                "mcp_and_tools": 22,
+                "tool_results": 7,
+                "conversation": 4,
+                "total_estimated": 50,
+            },
+        )
         self.assertEqual(extract_tool_namespace("mcp_box.shell"), "mcp:box")
 
     def test_header_stripping_and_secret_redaction(self) -> None:
@@ -238,8 +253,15 @@ class AgentXRayTests(unittest.TestCase):
             summary_obj = json.loads(raw_summary)
             self.assertEqual(summary_obj["summary"]["turn_count"], 2)
             self.assertEqual(summary_obj["summary"]["blocked_count"], 1)
+            self.assertEqual(summary_obj["summary"]["total_actual_input"], 4200)
             self.assertEqual(summary_obj["summary"]["total_cache_read"], 3100)
-            self.assertGreaterEqual(summary_obj["summary"]["estimated_cost_usd"], 0.0)
+            self.assertEqual(summary_obj["summary"]["stripped_header_count"], 1)
+            # Exact Sonnet 4.5 cost: (4200*3.00 + 3100*0.30 + 95*15.00)/1e6 = 0.014955; blocked turn = 0.0
+            self.assertAlmostEqual(summary_obj["summary"]["estimated_cost_usd"], 0.014955, places=6)
+            # Exact cache hit ratio: 3100 / (4200 + 3100) = 0.424658
+            self.assertAlmostEqual(summary_obj["summary"]["cache_hit_ratio"], 3100 / 7300, places=5)
+            self.assertEqual(summary_obj["traces"][0]["prompt_preview"], "")
+            self.assertEqual(summary_obj["traces"][1]["prompt_preview"], "")
 
             # 4. Verify live /_xray/?lang=zh UI rendering on proxy server
             conn4 = http.client.HTTPConnection("127.0.0.1", px_port, timeout=10)
