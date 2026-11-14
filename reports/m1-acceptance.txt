@@ -1,0 +1,39 @@
+=== agent-xray M1 Acceptance Suite ===
+Isolated temp dir: <mktemp>/xray-m1-accept (cleaned on exit)
+
+--- [Row 1 & Row 2] True read1 SSE Latency (20x 100B @ 200ms) & Clean Mid-Stream Disconnect ---
+ROW 1 [PASS]: 20x 100B SSE events @ 200ms -> min_delta_ms=0.09, median_delta_ms=0.19, max_delta_ms=0.98 (< 50.0 ms)
+ROW 2 [PASS]: Upstream mid-stream disconnect -> 10 complete events, clean EOF, 'HTTP/1.1' in body=0, '502' in body=0; client disconnect survived cleanly (recorded ttft_ms=1.23)
+
+--- [Row 3] >2 MB SSE Usage, Gzip Request/Response, Header Fidelity & Programmatic API ---
+ROW 3 [PASS]: 2.3MB Anthropic SSE output_tokens=9876, 2.2MB Responses SSE output_tokens=4321, gzip req/resp intact, openai-organization/project & duplicate headers preserved, programmatic API totals verified
+
+--- [Row 4] `run` Upstream Gateway Chaining & `--upstream` CLI Flag ---
+ROW 4 [PASS]: Parent ANTHROPIC_BASE_URL & OPENAI_BASE_URL(/v1) chained without /v1/v1 duplication; exit code 7 preserved; `--upstream` override & invalid-scheme guard (exit 2) verified
+
+--- [Row 5] 3-Format Block-Level 5-Bucket Classification & OpenAI Tool Calls / Reasoning ---
+ROW 5 [PASS]: 3 formats verified vs hand oracle -> Anthropic={'system_prompt': 160, 'workspace_rules': 101, 'mcp_and_tools': 56, 'tool_results': 154, 'conversation': 180, 'total_estimated': 651}, OpenAI_Chat={'system_prompt': 160, 'workspace_rules': 101, 'mcp_and_tools': 31, 'tool_results': 154, 'conversation': 356, 'total_estimated': 802}, OpenAI_Responses={'system_prompt': 160, 'workspace_rules': 101, 'mcp_and_tools': 31, 'tool_results': 154, 'conversation': 356, 'total_estimated': 802}
+
+--- [Row 6] Comprehensive `--block-secrets` & False-Positive Corpus ---
+ROW 6 [PASS]: 11/11 secret vectors (count_tokens, batches, embeddings, responses/compact, gzip, query, custom header, \u0073 escape, _-glued, non-JSON, PEM) returned HTTP 400 with upstream_bytes=0; benign auth headers, sk-ssh-ed25519, placeholders, PEM prose, SHA & UUID returned HTTP 200
+
+--- [Part 2 Additions] All-Column SQLite Audit, Sonnet >200k Pricing, & Estimated Labels ---
+PART2-X14 [PASS]: Dynamic PRAGMA table_info verified 15 columns (id,created_at,provider,model,path,status_code,latency_ms,ttft_ms,blocked,buckets_json,namespaces_json,usage_json,headers_json,secrets_json,prompt_preview) across tables=['traces', 'sqlite_sequence']; sqlite3 .dump secret matches=0 (block OFF & ON)
+PART2-PRICING [PASS]: claude-sonnet-4-5 <=200k=$0.1950 vs >200k=$0.7410 (2x input/cache, 1.5x output)
+PART2-ESTIMATED [PASS]: JSON `is_estimated=true`, CLI `(Estimated)`/`（估算）`, and HTML `(Estimated)`/`（估算）` verified
+
+--- [Part 2 W4] Collection & Estimation Source Scan for Fixed Ratios (0.12 / 0.28 / 0.34) ---
+PART2-W4 [PASS]: grep -rnE '\b0\.(12|28|34)\b' src/ --exclude='ui_html.py' -> 0 matches
+
+--- [Row 7] Live External API Tokenizer Calibration Check ---
+SKIPPED (没跑): XRAY_REAL_API!=1; requires user approval for paid API calibration
+
+--- [Supplemental W1] Automated M1 Mutation Verification (6 M1 Faults) ---
+  [MUTATION KILLED] M1_Row1_buffered_read_instead_of_read1 -> test_m1_sse_streaming_latency_midstream_disconnect_and_2mb_usage failed as expected (exit=1)
+  [MUTATION KILLED] M1_Row2_midstream_disconnect_injects_502 -> test_m1_sse_streaming_latency_midstream_disconnect_and_2mb_usage failed as expected (exit=1)
+  [MUTATION KILLED] M1_Item2_strip_openai_organization_header -> test_m1_preserve_openai_org_project_and_duplicate_headers failed as expected (exit=1)
+  [MUTATION KILLED] M1_Row4_run_ignores_parent_base_url -> test_m1_run_chains_existing_base_urls_supports_upstream_flag_and_labels_estimated failed as expected (exit=1)
+  [MUTATION KILLED] M1_Row5_monolithic_claude_md_rule_misclassification -> test_m1_block_level_and_inline_tag_splitting_across_three_formats failed as expected (exit=1)
+  [MUTATION KILLED] M1_Row6_skip_gzip_request_body_decompression -> test_m1_pem_prose_false_positive_and_request_surfaces_gzip_query_headers_escapes failed as expected (exit=1)
+
+=== ALL M1 ACCEPTANCE CHECKS & MUTATIONS PASSED ===

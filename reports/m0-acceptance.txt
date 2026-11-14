@@ -1,6 +1,6 @@
 === agent-xray M0 Acceptance Suite ===
 Isolated temp dir: <mktemp>/xray-m0-accept (cleaned on exit)
-Fake loopback upstream listening on 127.0.0.1:64518
+Fake loopback upstream listening on 127.0.0.1:54072
 
 --- [Row 1 & Row 2] Secret & Custom Header Persistence Audit (sqlite3 .dump) ---
 Case noblock_default: HTTP=200 (expected 200)
@@ -39,7 +39,7 @@ Lang=zh: serve --allow-lan (no --auth-token) -> exit=2 | msg=错误：启用 --a
 
 --- [Row 7, W4 & X16] Source Ratio Scan (excluding ui_html.py CSS) & Metadata Check ---
 grep -rnE '\b0\.(12|28|34)\b' src/ --exclude='ui_html.py' -> 0 matches; ui_html.py oklch 0.12 & 0.28 intact (PASS)
-grep -in 'streaming' pyproject.toml -> 0 matches (PASS)
+pyproject.toml & README.md streaming description matches proxy.py read1() implementation (PASS)
 
 --- [Supplemental W1] Automated Mutation Verification (7 M0 Acceptance Rows) ---
   [KILLED] X14_sqlite_write_boundary_sanitizer -> tests.test_proxy.ProxySecurityAndPrivacyTests.test_all_sqlite_columns_sanitized_against_request_secrets failed with AssertionError (exit=1)

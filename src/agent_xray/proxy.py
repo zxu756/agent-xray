@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import http.client
 import ipaddress
 import json
 import os
 import secrets
+import socket
 import ssl
+import threading
 import time
 import urllib.parse
 from dataclasses import dataclass, field
@@ -15,13 +18,54 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from .classifier import classify_request_payload, parse_usage_from_response
+from .classifier import IncrementalResponseUsageParser, classify_request_payload
 from .local_sessions import import_local_desktop_sessions
-from .privacy import audit_and_prepare_headers, normalize_trace_path, redact_secrets_in_text, scan_payload_for_secrets
+from .privacy import (
+    SecretFinding,
+    audit_and_prepare_headers,
+    normalize_trace_path,
+    redact_secrets_in_text,
+    scan_request_for_secrets,
+)
 from .store import TraceStore
 from .ui_html import render_inspector_html
 
 _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+_STREAM_READ_SIZE = 4096
+
+
+def validate_upstream_url(url: str) -> str:
+    """Validates an upstream HTTP(S) base URL and strips trailing slashes."""
+    cleaned = (url or "").strip()
+    parts = urllib.parse.urlsplit(cleaned)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ValueError(
+            f"Invalid upstream URL {url!r}: expected http:// or https:// with hostname"
+        )
+    try:
+        _ = parts.port
+    except ValueError as exc:
+        raise ValueError(f"Invalid upstream URL port in {url!r}") from exc
+    return cleaned.rstrip("/") if parts.path in ("", "/") and not parts.query else cleaned
+
+
+def _join_upstream_path(base_prefix: str, base_query: str, sub_path: str) -> str:
+    """Joins upstream base URL path prefix with incoming request path without /v1/v1 duplication."""
+    sub_parts = urllib.parse.urlsplit(sub_path)
+    sub_only = sub_parts.path or "/"
+    if not sub_only.startswith("/"):
+        sub_only = "/" + sub_only
+
+    bp = base_prefix.rstrip("/")
+    if bp.endswith("/v1") and (sub_only == "/v1" or sub_only.startswith("/v1/")):
+        sub_only = sub_only[3:] or "/"
+
+    joined_path = f"{bp}{sub_only}" if bp else sub_only
+    if base_query and sub_parts.query:
+        joined_query = f"{base_query}&{sub_parts.query}"
+    else:
+        joined_query = base_query or sub_parts.query
+    return f"{joined_path}?{joined_query}" if joined_query else joined_path
 
 
 @dataclass
@@ -29,10 +73,14 @@ class ProxyConfig:
     host: str = "127.0.0.1"
     port: int = 8788
     anthropic_upstream: str = field(
-        default_factory=lambda: os.environ.get("AGENT_XRAY_ANTHROPIC_UPSTREAM", "https://api.anthropic.com")
+        default_factory=lambda: os.environ.get(
+            "AGENT_XRAY_ANTHROPIC_UPSTREAM", "https://api.anthropic.com"
+        )
     )
     openai_upstream: str = field(
-        default_factory=lambda: os.environ.get("AGENT_XRAY_OPENAI_UPSTREAM", "https://api.openai.com")
+        default_factory=lambda: os.environ.get(
+            "AGENT_XRAY_OPENAI_UPSTREAM", "https://api.openai.com"
+        )
     )
     strip_telemetry_headers: bool = False
     block_secrets: bool = False
@@ -52,15 +100,211 @@ class XRayHTTPServer(ThreadingHTTPServer):
             raise ValueError(
                 "--allow-lan (or non-loopback bind) requires an explicit --auth-token"
             )
+        config.anthropic_upstream = validate_upstream_url(config.anthropic_upstream)
+        config.openai_upstream = validate_upstream_url(config.openai_upstream)
         if not config.auth_token.strip():
             config.auth_token = secrets.token_urlsafe(24)
         self.xray_config = config
         self.trace_store = store
+        self._inflight_cond = threading.Condition()
+        self._inflight_count = 0
         super().__init__((config.host, config.port), XRayRequestHandler)
+
+    def begin_inflight(self) -> None:
+        with self._inflight_cond:
+            self._inflight_count += 1
+
+    def end_inflight(self) -> None:
+        with self._inflight_cond:
+            self._inflight_count = max(0, self._inflight_count - 1)
+            if self._inflight_count == 0:
+                self._inflight_cond.notify_all()
+
+    def wait_for_inflight(self, timeout: float = 2.0) -> bool:
+        deadline = time.monotonic() + max(0.0, timeout)
+        with self._inflight_cond:
+            while self._inflight_count > 0:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._inflight_cond.wait(timeout=remaining)
+            return True
+
+
+# Canonical alias for downstream programmatic callers (e.g. skill-arena M1).
+XrayProxyServer = XRayHTTPServer
+
+
+@dataclass
+class RunningXRayProxy:
+    """Programmatic handle to a background XRayHTTPServer instance and its TraceStore."""
+
+    server: XRayHTTPServer
+    store: TraceStore
+    thread: threading.Thread
+    owns_store: bool = False
+    _stopped: bool = field(default=False, init=False, repr=False)
+
+    @property
+    def host(self) -> str:
+        addr_host = str(self.server.server_address[0])
+        return "127.0.0.1" if addr_host in ("0.0.0.0", "") else addr_host
+
+    @property
+    def port(self) -> int:
+        return int(self.server.server_address[1])
+
+    @property
+    def base_url(self) -> str:
+        h = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
+        return f"http://{h}:{self.port}"
+
+    @property
+    def anthropic_base_url(self) -> str:
+        return f"{self.base_url}/anthropic"
+
+    @property
+    def openai_base_url(self) -> str:
+        return f"{self.base_url}/openai/v1"
+
+    @property
+    def auth_token(self) -> str:
+        return self.server.xray_config.auth_token
+
+    def agent_env(self, base_env: Mapping[str, str] | None = None) -> dict[str, str]:
+        """Returns an environment dictionary routing Anthropic & OpenAI SDKs through this proxy."""
+        env = dict(base_env) if base_env is not None else {}
+        env["ANTHROPIC_BASE_URL"] = self.anthropic_base_url
+        env["OPENAI_BASE_URL"] = self.openai_base_url
+        return env
+
+    def get_turns(self, limit: int = 500) -> list[dict[str, Any]]:
+        self.server.wait_for_inflight(timeout=1.0)
+        return self.store.list_traces(limit=limit)
+
+    def get_traces(self, limit: int = 500) -> list[dict[str, Any]]:
+        self.server.wait_for_inflight(timeout=1.0)
+        return self.store.list_traces(limit=limit)
+
+    def get_totals(self, limit: int = 500) -> dict[str, Any]:
+        self.server.wait_for_inflight(timeout=1.0)
+        data = self.store.build_summary(limit=limit)
+        s = data["summary"]
+        turns = data["traces"]
+        ttft_vals = [
+            float(t["ttft_ms"])
+            for t in turns
+            if isinstance(t.get("ttft_ms"), (int, float)) and not t.get("blocked")
+        ]
+        return {
+            "turn_count": s["turn_count"],
+            "blocked_count": s["blocked_count"],
+            "input_tokens": s["total_actual_input"],
+            "cached_input_tokens": s["total_cache_read"],
+            "cache_creation_input_tokens": s["total_cache_write"],
+            "output_tokens": s["total_output_tokens"],
+            "estimated_cost_usd": s["estimated_cost_usd"],
+            "cache_hit_ratio": s["cache_hit_ratio"],
+            "ttft_ms_values": ttft_vals,
+            "min_ttft_ms": min(ttft_vals) if ttft_vals else None,
+            "max_ttft_ms": max(ttft_vals) if ttft_vals else None,
+            "summary": s,
+            "turns": turns,
+        }
+
+    def clear(self) -> None:
+        self.store.clear()
+
+    def reset(self) -> None:
+        self.store.clear()
+
+    def close(self) -> None:
+        self.stop()
+
+    def stop(self) -> None:
+        if self._stopped:
+            return
+        self._stopped = True
+        try:
+            self.server.wait_for_inflight(timeout=2.0)
+            self.server.shutdown()
+        finally:
+            self.server.server_close()
+            self.thread.join(timeout=3.0)
+            if self.owns_store:
+                self.store.close()
+
+    def __enter__(self) -> RunningXRayProxy:
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.stop()
+
+
+def start_background_proxy(
+    *,
+    host: str = "127.0.0.1",
+    port: int = 0,
+    db_path: str | Path | None = ":memory:",
+    store: TraceStore | None = None,
+    upstream: str | None = None,
+    anthropic_upstream: str | None = None,
+    openai_upstream: str | None = None,
+    strip_telemetry_headers: bool = False,
+    block_secrets: bool = False,
+    store_previews: bool = False,
+    auth_token: str = "",
+) -> RunningXRayProxy:
+    """Starts an XRayHTTPServer on a background daemon thread and returns a RunningXRayProxy."""
+    owns_store = store is None
+    active_store = store if store is not None else TraceStore(db_path if db_path is not None else ":memory:")
+    ant_up = (
+        anthropic_upstream
+        or upstream
+        or os.environ.get("AGENT_XRAY_ANTHROPIC_UPSTREAM")
+        or "https://api.anthropic.com"
+    )
+    oai_up = (
+        openai_upstream
+        or upstream
+        or os.environ.get("AGENT_XRAY_OPENAI_UPSTREAM")
+        or "https://api.openai.com"
+    )
+    cfg = ProxyConfig(
+        host=host,
+        port=port,
+        anthropic_upstream=ant_up,
+        openai_upstream=oai_up,
+        strip_telemetry_headers=strip_telemetry_headers,
+        block_secrets=block_secrets,
+        store_previews=store_previews,
+        auth_token=auth_token,
+    )
+    try:
+        srv = XRayHTTPServer(cfg, active_store)
+    except Exception:
+        if owns_store:
+            active_store.close()
+        raise
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    return RunningXRayProxy(
+        server=srv,
+        store=active_store,
+        thread=thread,
+        owns_store=owns_store,
+    )
 
 
 class XRayRequestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+
+    def setup(self) -> None:
+        super().setup()
+        try:
+            self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except OSError:
+            pass
 
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -203,11 +447,13 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
                 self._send_bytes(200, "text/html; charset=utf-8", html)
                 return
             if parsed.path == "/_xray/api/summary":
+                self.server.wait_for_inflight(timeout=0.5)  # type: ignore[attr-defined]
                 data = self.server.trace_store.build_summary()  # type: ignore[attr-defined]
                 body = json.dumps(data, ensure_ascii=False).encode("utf-8")
                 self._send_bytes(200, "application/json; charset=utf-8", body)
                 return
             if parsed.path == "/_xray/api/traces":
+                self.server.wait_for_inflight(timeout=0.5)  # type: ignore[attr-defined]
                 traces = self.server.trace_store.list_traces()  # type: ignore[attr-defined]
                 body = json.dumps({"traces": traces}, ensure_ascii=False).encode("utf-8")
                 self._send_bytes(200, "application/json; charset=utf-8", body)
@@ -308,7 +554,11 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
                     continue
                 size = int(size_str, 16)
                 if size == 0:
-                    self.rfile.readline()
+                    # Consume optional trailer headers up to terminating blank line
+                    while True:
+                        trailer = self.rfile.readline()
+                        if trailer in (b"\r\n", b"\n", b""):
+                            break
                     break
                 chunks.extend(self.rfile.read(size))
                 self.rfile.read(2)  # trailing CRLF
@@ -333,12 +583,14 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
         )
 
     def _send_bytes(self, status: int, content_type: str, body: bytes) -> None:
+        self.close_connection = True
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(body)
+        if self.command != "HEAD":
+            self.wfile.write(body)
         self.wfile.flush()
 
     def _resolve_upstream(self) -> tuple[str, str]:
@@ -359,7 +611,21 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
             return cfg.anthropic_upstream, self.path
         return cfg.openai_upstream, self.path
 
+    @staticmethod
+    def _infer_provider(stored_path: str, headers: Any) -> str:
+        lp = stored_path.lower()
+        if "anthropic" in lp or "/messages" in lp or "x-api-key" in headers or "anthropic-version" in headers:
+            return "anthropic"
+        return "openai"
+
     def _forward_upstream(self, method: str) -> None:
+        self.server.begin_inflight()  # type: ignore[attr-defined]
+        try:
+            self._forward_upstream_inner(method)
+        finally:
+            self.server.end_inflight()  # type: ignore[attr-defined]
+
+    def _forward_upstream_inner(self, method: str) -> None:
         t0 = time.monotonic()
         cfg: ProxyConfig = self.server.xray_config  # type: ignore[attr-defined]
         store: TraceStore = self.server.trace_store  # type: ignore[attr-defined]
@@ -367,23 +633,31 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
         req_body = self._read_request_body()
         stored_path = normalize_trace_path(self.path)
         is_turn = self._is_llm_turn_endpoint(method, self.path)
+        inbound_pairs = list(self.headers.items())
+        req_encoding = self.headers.get("Content-Encoding")
 
         outbound_headers, header_audit = audit_and_prepare_headers(
-            self.headers.items(),
+            inbound_pairs,
             strip_telemetry=cfg.strip_telemetry_headers,
         )
 
-        payload_dict: dict[str, Any] | None = None
-        raw_text = ""
-        if req_body and is_turn:
-            raw_text = req_body.decode("utf-8", errors="replace")
-            try:
-                parsed = json.loads(raw_text)
-                if isinstance(parsed, dict):
-                    payload_dict = parsed
-            except Exception:
-                payload_dict = None
+        # Scan ALL endpoints across path, query, non-auth headers, and (decompressed) body
+        scan_res = scan_request_for_secrets(
+            raw_path=self.path,
+            headers=inbound_pairs,
+            raw_body=req_body,
+            content_encoding=req_encoding,
+        )
+        secret_findings = list(scan_res.findings)
+        if cfg.block_secrets and scan_res.compression_error and not secret_findings:
+            secret_findings.append(
+                SecretFinding(
+                    rule=f"Uninspectable Compressed Body ({scan_res.compression_error})",
+                    field="header.Content-Encoding",
+                )
+            )
 
+        payload_dict = scan_res.parsed_payload if isinstance(scan_res.parsed_payload, dict) else None
         classification = (
             classify_request_payload(
                 stored_path,
@@ -393,24 +667,26 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
             if (is_turn and payload_dict is not None)
             else None
         )
-        secret_findings = (
-            scan_payload_for_secrets(payload_dict, raw_fallback=raw_text)
-            if raw_text
-            else []
-        )
 
         if cfg.block_secrets and secret_findings:
             latency_ms = int((time.monotonic() - t0) * 1000)
-            provider = classification.provider if classification is not None else (
-                "anthropic" if ("anthropic" in stored_path.lower() or "messages" in stored_path.lower()) else "openai"
+            provider = (
+                classification.provider
+                if classification is not None
+                else self._infer_provider(stored_path, self.headers)
             )
-            model = classification.model if classification is not None else "unknown"
+            model = (
+                classification.model
+                if classification is not None
+                else str((payload_dict or {}).get("model") or "unknown")
+            )
             store.record_turn(
                 provider=provider,
                 model=model,
                 path=stored_path,
                 status_code=400,
                 latency_ms=latency_ms,
+                ttft_ms=None,
                 blocked=True,
                 buckets={
                     "system_prompt": 0,
@@ -445,33 +721,74 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
 
         upstream_base, sub_path = self._resolve_upstream()
         parsed_up = urllib.parse.urlsplit(upstream_base)
-        base_prefix = parsed_up.path.rstrip("/")
-        target_path = f"{base_prefix}{sub_path}" if sub_path.startswith("/") else f"{base_prefix}/{sub_path}"
-
-        outbound_headers["Host"] = parsed_up.netloc
-        outbound_headers["Accept-Encoding"] = "identity"
-        if req_body:
-            outbound_headers["Content-Length"] = str(len(req_body))
+        target_path = _join_upstream_path(parsed_up.path, parsed_up.query, sub_path)
 
         conn: http.client.HTTPConnection
         if parsed_up.scheme == "https":
             ctx = ssl.create_default_context()
-            conn = http.client.HTTPSConnection(parsed_up.hostname or "", parsed_up.port or 443, context=ctx, timeout=180)
+            conn = http.client.HTTPSConnection(
+                parsed_up.hostname or "",
+                parsed_up.port or 443,
+                context=ctx,
+                timeout=180,
+            )
         else:
-            conn = http.client.HTTPConnection(parsed_up.hostname or "127.0.0.1", parsed_up.port or 80, timeout=180)
+            conn = http.client.HTTPConnection(
+                parsed_up.hostname or "127.0.0.1",
+                parsed_up.port or 80,
+                timeout=180,
+            )
 
-        captured_resp = bytearray()
         status_code = 502
         is_sse = False
+        headers_sent = False
+        ttft_ms: float | None = None
+        usage_parser: IncrementalResponseUsageParser | None = None
+
         try:
-            conn.request(method, target_path, body=req_body if req_body else None, headers=outbound_headers)
+            conn.connect()
+            if conn.sock is not None:
+                try:
+                    conn.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                except OSError:
+                    pass
+
+            has_accept_encoding = "accept-encoding" in outbound_headers
+            conn.putrequest(
+                method,
+                target_path,
+                skip_host=True,
+                skip_accept_encoding=has_accept_encoding,
+            )
+            conn.putheader("Host", parsed_up.netloc)
+            for h_name, h_val in outbound_headers.pairs():
+                conn.putheader(h_name, h_val)
+            if req_body:
+                conn.putheader("Content-Length", str(len(req_body)))
+            elif method.upper() in ("POST", "PUT", "PATCH") and (
+                "content-length" in self.headers or "transfer-encoding" in self.headers
+            ):
+                conn.putheader("Content-Length", "0")
+            conn.endheaders(req_body if req_body else None)
+
             up_resp = conn.getresponse()
             status_code = up_resp.status
             resp_ct = up_resp.getheader("Content-Type") or "application/octet-stream"
+            resp_ce = up_resp.getheader("Content-Encoding") or ""
+            resp_te = (up_resp.getheader("Transfer-Encoding") or "").lower()
             is_sse = "text/event-stream" in resp_ct.lower()
 
+            if classification is not None and status_code < 400 and method.upper() != "HEAD":
+                usage_parser = IncrementalResponseUsageParser(
+                    is_sse=is_sse,
+                    content_encoding=resp_ce,
+                )
+
+            self.close_connection = True
             self.send_response(status_code)
-            skip_resp_hdrs = {"transfer-encoding", "connection", "keep-alive", "content-length"}
+            skip_resp_hdrs = {"transfer-encoding", "connection", "keep-alive"}
+            if is_sse or "chunked" in resp_te:
+                skip_resp_hdrs.add("content-length")
             for hk, hv in up_resp.getheaders():
                 if hk.lower() in skip_resp_hdrs:
                     continue
@@ -479,33 +796,58 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.flush()
+            headers_sent = True
 
-            while True:
-                chunk = up_resp.read(1024 if is_sse else 8192)
-                if not chunk:
-                    break
-                if len(captured_resp) < 524_288:
-                    captured_resp.extend(chunk)
-                self.wfile.write(chunk)
-                self.wfile.flush()
+            if method.upper() != "HEAD":
+                read_chunk = getattr(up_resp, "read1", None)
+                if read_chunk is None and getattr(up_resp, "fp", None) is not None:
+                    read_chunk = getattr(up_resp.fp, "read1", None)
+                while True:
+                    chunk = (
+                        read_chunk(_STREAM_READ_SIZE)
+                        if read_chunk is not None
+                        else up_resp.read(_STREAM_READ_SIZE)
+                    )
+                    if not chunk:
+                        break
+                    if ttft_ms is None:
+                        ttft_ms = round((time.monotonic() - t0) * 1000.0, 3)
+                    if usage_parser is not None:
+                        usage_parser.feed(chunk)
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
         except Exception as exc:
-            err = json.dumps({"error": f"Upstream connection failed: {exc}"}).encode("utf-8")
+            self.close_connection = True
+            if not headers_sent:
+                err = json.dumps(
+                    {"error": f"Upstream connection failed: {redact_secrets_in_text(str(exc))}"}
+                ).encode("utf-8")
+                try:
+                    self._send_bytes(502, "application/json", err)
+                except Exception:
+                    pass
+            # Once response headers have been flushed to the client, NEVER write
+            # "HTTP/1.1 502..." or JSON error bytes into the middle of the stream.
+        finally:
             try:
-                self._send_bytes(502, "application/json", err)
+                conn.close()
             except Exception:
                 pass
-        finally:
-            conn.close()
 
         latency_ms = int((time.monotonic() - t0) * 1000)
         if classification is not None:
-            usage = parse_usage_from_response(bytes(captured_resp), is_sse=is_sse)
+            usage = (
+                usage_parser.finish()
+                if usage_parser is not None
+                else {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}
+            )
             store.record_turn(
                 provider=classification.provider,
                 model=classification.model,
                 path=stored_path,
                 status_code=status_code,
                 latency_ms=latency_ms,
+                ttft_ms=ttft_ms,
                 blocked=False,
                 buckets=classification.buckets.to_dict(),
                 tool_namespaces=[ns.to_dict() for ns in classification.tool_namespaces],

@@ -649,7 +649,7 @@
   <div class="workbench">
     <section class="pane-left" aria-labelledby="flame-heading">
       <div class="sec-head">
-        <h2 id="flame-heading">Turn-by-turn context token flamegraph</h2>
+        <h2 id="flame-heading">Turn-by-turn context token flamegraph (Estimated)</h2>
         <span class="sec-meta mono" id="turn-subtitle"></span>
       </div>
       <div class="legend" aria-label="Context token buckets">
@@ -667,7 +667,7 @@
 
       <section aria-labelledby="mcp-heading">
         <div class="sec-head">
-          <h2 id="mcp-heading">MCP &amp; tool schema token leaderboard</h2>
+          <h2 id="mcp-heading">MCP &amp; tool schema token leaderboard (Estimated)</h2>
           <span class="sec-meta mono" id="mcp-share-badge"></span>
         </div>
         <table>
@@ -675,7 +675,7 @@
             <tr>
               <th id="th-ns">Namespace</th>
               <th class="num" id="th-tools">Tools</th>
-              <th class="num" id="th-tok-turn">Tokens / turn</th>
+              <th class="num" id="th-tok-turn">Tokens / turn (Estimated)</th>
               <th class="num" id="th-share">Share</th>
             </tr>
           </thead>
@@ -705,7 +705,7 @@
 </main>
 
 <script>
-let DATA = {"summary": {"turn_count": 6, "blocked_count": 1, "total_estimated_input": 238830, "total_actual_input": 70000, "total_cache_read": 146700, "total_cache_write": 38400, "total_output_tokens": 3440, "tool_definition_tokens": 134890, "mcp_tool_tokens": 114290, "mcp_tool_share": 0.4785, "estimated_cost_usd": 0.44961, "unknown_price_turn_count": 0, "pricing_date": "unverified", "cache_hit_ratio": 0.575069, "stripped_header_count": 18, "bucket_totals": {"system_prompt": 18000, "workspace_rules": 14700, "mcp_and_tools": 134890, "tool_results": 62770, "conversation": 8470}}, "sessions": [{"session_id": "anthropic:claude-sonnet-4-5", "provider": "anthropic", "model": "claude-sonnet-4-5", "turn_count": 6}], "top_namespaces": [{"namespace": "mcp:rea", "max_tools": 48, "cumulative_tokens": 73680, "per_turn_tokens": 18420}, {"namespace": "mcp:playwright", "max_tools": 25, "cumulative_tokens": 27360, "per_turn_tokens": 6840}, {"namespace": "builtin", "max_tools": 14, "cumulative_tokens": 20600, "per_turn_tokens": 4120}, {"namespace": "mcp:scholar", "max_tools": 8, "cumulative_tokens": 9800, "per_turn_tokens": 1960}, {"namespace": "mcp:context7", "max_tools": 2, "cumulative_tokens": 3450, "per_turn_tokens": 1410}], "traces": [{"id": 1, "turn_number": 1, "session_id": "anthropic:claude-sonnet-4-5", "created_at": 1794556800.0, "provider": "anthropic", "model": "claude-sonnet-4-5", "path": "/anthropic/v1/messages", "status_code": 200, "latency_ms": 840, "blocked": false, "has_bucket_breakdown": true, "buckets": {"system_prompt": 3600, "workspace_rules": 2940, "mcp_and_tools": 31850, "tool_results": 0, "conversation": 420, "total_estimated": 38810}, "tool_namespaces": [{"namespace": "mcp:rea", "tool_count": 48, "estimated_tokens": 18420}, {"namespace": "mcp:playwright", "tool_count": 25, "estimated_tokens": 6840}, {"namespace": "builtin", "tool_count": 14, "estimated_tokens": 4120}, {"namespace": "mcp:scholar", "tool_count": 8, "estimated_tokens": 1960}, {"namespace": "mcp:context7", "tool_count": 2, "estimated_tokens": 510}], "usage": {"input_tokens": 3400, "cache_read_tokens": 0, "cache_write_tokens": 38400, "output_tokens": 510}, "cache_hit_ratio": 0.0, "estimated_cost_usd": 0.16185, "header_audit": [{"name": "x-api-key", "value_length": 54, "category": "auth", "action": "redacted"}, {"name": "anthropic-version", "value_length": 10, "category": "protocol", "action": "forwarded"}, {"name": "User-Agent", "value_length": 32, "category": "fingerprint", "action": "normalized"}, {"name": "x-stainless-os", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-arch", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-runtime-version", "value_length": 8, "category": "telemetry", "action": "stripped"}], "secret_findings": [], "prompt_preview": "Audit dist/ bundle for leaked source maps and non-system dylibs"}, {"id": 2, "turn_number": 2, "session_id": "anthropic:claude-sonnet-4-5", "created_at": 1794556842.0, "provider": "anthropic", "model": "claude-sonnet-4-5", "path": "/anthropic/v1/messages", "status_code": 200, "latency_ms": 1120, "blocked": false, "has_bucket_breakdown": true, "buckets": {"system_prompt": 3600, "workspace_rules": 2940, "mcp_and_tools": 31850, "tool_results": 6420, "conversation": 980, "total_estimated": 45790}, "tool_namespaces": [{"namespace": "mcp:rea", "tool_count": 48, "estimated_tokens": 18420}, {"namespace": "mcp:playwright", "tool_count": 25, "estimated_tokens": 6840}, {"namespace": "builtin", "tool_count": 14, "estimated_tokens": 4120}, {"namespace": "mcp:scholar", "tool_count": 8, "estimated_tokens": 1960}, {"namespace": "mcp:context7", "tool_count": 2, "estimated_tokens": 510}], "usage": {"input_tokens": 14700, "cache_read_tokens": 34200, "cache_write_tokens": 0, "output_tokens": 690}, "cache_hit_ratio": 0.699387, "estimated_cost_usd": 0.06471, "header_audit": [{"name": "x-api-key", "value_length": 54, "category": "auth", "action": "redacted"}, {"name": "anthropic-version", "value_length": 10, "category": "protocol", "action": "forwarded"}, {"name": "User-Agent", "value_length": 32, "category": "fingerprint", "action": "normalized"}, {"name": "x-stainless-os", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-arch", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-runtime-version", "value_length": 8, "category": "telemetry", "action": "stripped"}], "secret_findings": [], "prompt_preview": "Read Package.swift and inspect Mach-O load commands"}, {"id": 3, "turn_number": 3, "session_id": "anthropic:claude-sonnet-4-5", "created_at": 1794556884.0, "provider": "anthropic", "model": "claude-sonnet-4-5", "path": "/anthropic/v1/messages", "status_code": 200, "latency_ms": 1490, "blocked": false, "has_bucket_breakdown": true, "buckets": {"system_prompt": 3600, "workspace_rules": 2940, "mcp_and_tools": 31850, "tool_results": 14850, "conversation": 1640, "total_estimated": 54880}, "tool_namespaces": [{"namespace": "mcp:rea", "tool_count": 48, "estimated_tokens": 18420}, {"namespace": "mcp:playwright", "tool_count": 25, "estimated_tokens": 6840}, {"namespace": "builtin", "tool_count": 14, "estimated_tokens": 4120}, {"namespace": "mcp:scholar", "tool_count": 8, "estimated_tokens": 1960}, {"namespace": "mcp:context7", "tool_count": 2, "estimated_tokens": 510}], "usage": {"input_tokens": 20300, "cache_read_tokens": 38100, "cache_write_tokens": 0, "output_tokens": 880}, "cache_hit_ratio": 0.652397, "estimated_cost_usd": 0.08553, "header_audit": [{"name": "x-api-key", "value_length": 54, "category": "auth", "action": "redacted"}, {"name": "anthropic-version", "value_length": 10, "category": "protocol", "action": "forwarded"}, {"name": "User-Agent", "value_length": 32, "category": "fingerprint", "action": "normalized"}, {"name": "x-stainless-os", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-arch", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-runtime-version", "value_length": 8, "category": "telemetry", "action": "stripped"}], "secret_findings": [], "prompt_preview": "Patch rpath flags in Scripts/build-app.sh and run test suite"}, {"id": 4, "turn_number": 4, "session_id": "anthropic:claude-sonnet-4-5", "created_at": 1794556926.0, "provider": "anthropic", "model": "claude-sonnet-4-5", "path": "/anthropic/v1/messages", "status_code": 200, "latency_ms": 960, "blocked": false, "has_bucket_breakdown": true, "buckets": {"system_prompt": 3600, "workspace_rules": 2940, "mcp_and_tools": 31850, "tool_results": 22900, "conversation": 2310, "total_estimated": 63600}, "tool_namespaces": [{"namespace": "mcp:rea", "tool_count": 48, "estimated_tokens": 18420}, {"namespace": "mcp:playwright", "tool_count": 25, "estimated_tokens": 6840}, {"namespace": "builtin", "tool_count": 14, "estimated_tokens": 4120}, {"namespace": "mcp:scholar", "tool_count": 8, "estimated_tokens": 1960}, {"namespace": "mcp:context7", "tool_count": 2, "estimated_tokens": 510}], "usage": {"input_tokens": 23200, "cache_read_tokens": 44600, "cache_write_tokens": 0, "output_tokens": 620}, "cache_hit_ratio": 0.657817, "estimated_cost_usd": 0.09228, "header_audit": [{"name": "x-api-key", "value_length": 54, "category": "auth", "action": "redacted"}, {"name": "anthropic-version", "value_length": 10, "category": "protocol", "action": "forwarded"}, {"name": "User-Agent", "value_length": 32, "category": "fingerprint", "action": "normalized"}, {"name": "x-stainless-os", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-arch", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-runtime-version", "value_length": 8, "category": "telemetry", "action": "stripped"}], "secret_findings": [], "prompt_preview": "Verify codesign --strict output and summarize binary footprint"}, {"id": 5, "turn_number": 5, "session_id": "anthropic:claude-sonnet-4-5", "created_at": 1794556968.0, "provider": "anthropic", "model": "claude-sonnet-4-5", "path": "/anthropic/v1/messages", "status_code": 400, "latency_ms": 14, "blocked": true, "has_bucket_breakdown": true, "buckets": {"system_prompt": 0, "workspace_rules": 0, "mcp_and_tools": 0, "tool_results": 0, "conversation": 0, "total_estimated": 0}, "tool_namespaces": [], "usage": {"input_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0, "output_tokens": 0}, "cache_hit_ratio": 0.0, "estimated_cost_usd": 0.0, "header_audit": [{"name": "x-api-key", "value_length": 54, "category": "auth", "action": "redacted"}, {"name": "anthropic-version", "value_length": 10, "category": "protocol", "action": "forwarded"}, {"name": "User-Agent", "value_length": 32, "category": "fingerprint", "action": "normalized"}, {"name": "x-stainless-os", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-arch", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-runtime-version", "value_length": 8, "category": "telemetry", "action": "stripped"}], "secret_findings": [{"rule": "Anthropic API Key", "field": "messages[4].content"}], "prompt_preview": ""}, {"id": 6, "turn_number": 6, "session_id": "anthropic:claude-sonnet-4-5", "created_at": 1794557010.0, "provider": "anthropic", "model": "claude-sonnet-4-5", "path": "/anthropic/v1/messages", "status_code": 200, "latency_ms": 780, "blocked": false, "has_bucket_breakdown": true, "buckets": {"system_prompt": 3600, "workspace_rules": 2940, "mcp_and_tools": 7490, "tool_results": 18600, "conversation": 3120, "total_estimated": 35750}, "tool_namespaces": [{"namespace": "builtin", "tool_count": 14, "estimated_tokens": 4120}, {"namespace": "mcp:scholar", "tool_count": 8, "estimated_tokens": 1960}, {"namespace": "mcp:context7", "tool_count": 2, "estimated_tokens": 1410}], "usage": {"input_tokens": 8400, "cache_read_tokens": 29800, "cache_write_tokens": 0, "output_tokens": 740}, "cache_hit_ratio": 0.780105, "estimated_cost_usd": 0.04524, "header_audit": [{"name": "x-api-key", "value_length": 54, "category": "auth", "action": "redacted"}, {"name": "anthropic-version", "value_length": 10, "category": "protocol", "action": "forwarded"}, {"name": "User-Agent", "value_length": 32, "category": "fingerprint", "action": "normalized"}, {"name": "x-stainless-os", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-arch", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-runtime-version", "value_length": 8, "category": "telemetry", "action": "stripped"}], "secret_findings": [], "prompt_preview": "Disabled unused MCP servers - re-run release verification"}], "is_demo": true};
+let DATA = {"summary": {"turn_count": 6, "blocked_count": 1, "is_estimated": true, "buckets_are_estimated": true, "bucket_unit": "estimated_tokens", "total_estimated_input": 238830, "total_actual_input": 70000, "total_cache_read": 146700, "total_cache_write": 38400, "total_output_tokens": 3440, "tool_definition_tokens": 134890, "mcp_tool_tokens": 114290, "mcp_tool_share": 0.4785, "estimated_cost_usd": 0.44961, "unknown_price_turn_count": 0, "pricing_date": "unverified", "cache_hit_ratio": 0.575069, "stripped_header_count": 18, "bucket_totals": {"system_prompt": 18000, "workspace_rules": 14700, "mcp_and_tools": 134890, "tool_results": 62770, "conversation": 8470}}, "sessions": [{"session_id": "anthropic:claude-sonnet-4-5", "provider": "anthropic", "model": "claude-sonnet-4-5", "turn_count": 6}], "top_namespaces": [{"namespace": "mcp:rea", "max_tools": 48, "cumulative_tokens": 73680, "per_turn_tokens": 18420}, {"namespace": "mcp:playwright", "max_tools": 25, "cumulative_tokens": 27360, "per_turn_tokens": 6840}, {"namespace": "builtin", "max_tools": 14, "cumulative_tokens": 20600, "per_turn_tokens": 4120}, {"namespace": "mcp:scholar", "max_tools": 8, "cumulative_tokens": 9800, "per_turn_tokens": 1960}, {"namespace": "mcp:context7", "max_tools": 2, "cumulative_tokens": 3450, "per_turn_tokens": 1410}], "traces": [{"id": 1, "turn_number": 1, "session_id": "anthropic:claude-sonnet-4-5", "created_at": 1794556800.0, "provider": "anthropic", "model": "claude-sonnet-4-5", "path": "/anthropic/v1/messages", "status_code": 200, "latency_ms": 840, "ttft_ms": null, "blocked": false, "has_bucket_breakdown": true, "is_estimated": true, "buckets_are_estimated": true, "bucket_unit": "estimated_tokens", "buckets": {"system_prompt": 3600, "workspace_rules": 2940, "mcp_and_tools": 31850, "tool_results": 0, "conversation": 420, "total_estimated": 38810}, "tool_namespaces": [{"namespace": "mcp:rea", "tool_count": 48, "estimated_tokens": 18420}, {"namespace": "mcp:playwright", "tool_count": 25, "estimated_tokens": 6840}, {"namespace": "builtin", "tool_count": 14, "estimated_tokens": 4120}, {"namespace": "mcp:scholar", "tool_count": 8, "estimated_tokens": 1960}, {"namespace": "mcp:context7", "tool_count": 2, "estimated_tokens": 510}], "usage": {"input_tokens": 3400, "cache_read_tokens": 0, "cache_write_tokens": 38400, "output_tokens": 510}, "input_tokens": 3400, "cached_input_tokens": 0, "cache_creation_input_tokens": 38400, "output_tokens": 510, "cache_hit_ratio": 0.0, "estimated_cost_usd": 0.16185, "header_audit": [{"name": "x-api-key", "value_length": 54, "category": "auth", "action": "redacted"}, {"name": "anthropic-version", "value_length": 10, "category": "protocol", "action": "forwarded"}, {"name": "User-Agent", "value_length": 32, "category": "fingerprint", "action": "normalized"}, {"name": "x-stainless-os", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-arch", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-runtime-version", "value_length": 8, "category": "telemetry", "action": "stripped"}], "secret_findings": [], "prompt_preview": "Audit dist/ bundle for leaked source maps and non-system dylibs"}, {"id": 2, "turn_number": 2, "session_id": "anthropic:claude-sonnet-4-5", "created_at": 1794556842.0, "provider": "anthropic", "model": "claude-sonnet-4-5", "path": "/anthropic/v1/messages", "status_code": 200, "latency_ms": 1120, "ttft_ms": null, "blocked": false, "has_bucket_breakdown": true, "is_estimated": true, "buckets_are_estimated": true, "bucket_unit": "estimated_tokens", "buckets": {"system_prompt": 3600, "workspace_rules": 2940, "mcp_and_tools": 31850, "tool_results": 6420, "conversation": 980, "total_estimated": 45790}, "tool_namespaces": [{"namespace": "mcp:rea", "tool_count": 48, "estimated_tokens": 18420}, {"namespace": "mcp:playwright", "tool_count": 25, "estimated_tokens": 6840}, {"namespace": "builtin", "tool_count": 14, "estimated_tokens": 4120}, {"namespace": "mcp:scholar", "tool_count": 8, "estimated_tokens": 1960}, {"namespace": "mcp:context7", "tool_count": 2, "estimated_tokens": 510}], "usage": {"input_tokens": 14700, "cache_read_tokens": 34200, "cache_write_tokens": 0, "output_tokens": 690}, "input_tokens": 14700, "cached_input_tokens": 34200, "cache_creation_input_tokens": 0, "output_tokens": 690, "cache_hit_ratio": 0.699387, "estimated_cost_usd": 0.06471, "header_audit": [{"name": "x-api-key", "value_length": 54, "category": "auth", "action": "redacted"}, {"name": "anthropic-version", "value_length": 10, "category": "protocol", "action": "forwarded"}, {"name": "User-Agent", "value_length": 32, "category": "fingerprint", "action": "normalized"}, {"name": "x-stainless-os", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-arch", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-runtime-version", "value_length": 8, "category": "telemetry", "action": "stripped"}], "secret_findings": [], "prompt_preview": "Read Package.swift and inspect Mach-O load commands"}, {"id": 3, "turn_number": 3, "session_id": "anthropic:claude-sonnet-4-5", "created_at": 1794556884.0, "provider": "anthropic", "model": "claude-sonnet-4-5", "path": "/anthropic/v1/messages", "status_code": 200, "latency_ms": 1490, "ttft_ms": null, "blocked": false, "has_bucket_breakdown": true, "is_estimated": true, "buckets_are_estimated": true, "bucket_unit": "estimated_tokens", "buckets": {"system_prompt": 3600, "workspace_rules": 2940, "mcp_and_tools": 31850, "tool_results": 14850, "conversation": 1640, "total_estimated": 54880}, "tool_namespaces": [{"namespace": "mcp:rea", "tool_count": 48, "estimated_tokens": 18420}, {"namespace": "mcp:playwright", "tool_count": 25, "estimated_tokens": 6840}, {"namespace": "builtin", "tool_count": 14, "estimated_tokens": 4120}, {"namespace": "mcp:scholar", "tool_count": 8, "estimated_tokens": 1960}, {"namespace": "mcp:context7", "tool_count": 2, "estimated_tokens": 510}], "usage": {"input_tokens": 20300, "cache_read_tokens": 38100, "cache_write_tokens": 0, "output_tokens": 880}, "input_tokens": 20300, "cached_input_tokens": 38100, "cache_creation_input_tokens": 0, "output_tokens": 880, "cache_hit_ratio": 0.652397, "estimated_cost_usd": 0.08553, "header_audit": [{"name": "x-api-key", "value_length": 54, "category": "auth", "action": "redacted"}, {"name": "anthropic-version", "value_length": 10, "category": "protocol", "action": "forwarded"}, {"name": "User-Agent", "value_length": 32, "category": "fingerprint", "action": "normalized"}, {"name": "x-stainless-os", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-arch", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-runtime-version", "value_length": 8, "category": "telemetry", "action": "stripped"}], "secret_findings": [], "prompt_preview": "Patch rpath flags in Scripts/build-app.sh and run test suite"}, {"id": 4, "turn_number": 4, "session_id": "anthropic:claude-sonnet-4-5", "created_at": 1794556926.0, "provider": "anthropic", "model": "claude-sonnet-4-5", "path": "/anthropic/v1/messages", "status_code": 200, "latency_ms": 960, "ttft_ms": null, "blocked": false, "has_bucket_breakdown": true, "is_estimated": true, "buckets_are_estimated": true, "bucket_unit": "estimated_tokens", "buckets": {"system_prompt": 3600, "workspace_rules": 2940, "mcp_and_tools": 31850, "tool_results": 22900, "conversation": 2310, "total_estimated": 63600}, "tool_namespaces": [{"namespace": "mcp:rea", "tool_count": 48, "estimated_tokens": 18420}, {"namespace": "mcp:playwright", "tool_count": 25, "estimated_tokens": 6840}, {"namespace": "builtin", "tool_count": 14, "estimated_tokens": 4120}, {"namespace": "mcp:scholar", "tool_count": 8, "estimated_tokens": 1960}, {"namespace": "mcp:context7", "tool_count": 2, "estimated_tokens": 510}], "usage": {"input_tokens": 23200, "cache_read_tokens": 44600, "cache_write_tokens": 0, "output_tokens": 620}, "input_tokens": 23200, "cached_input_tokens": 44600, "cache_creation_input_tokens": 0, "output_tokens": 620, "cache_hit_ratio": 0.657817, "estimated_cost_usd": 0.09228, "header_audit": [{"name": "x-api-key", "value_length": 54, "category": "auth", "action": "redacted"}, {"name": "anthropic-version", "value_length": 10, "category": "protocol", "action": "forwarded"}, {"name": "User-Agent", "value_length": 32, "category": "fingerprint", "action": "normalized"}, {"name": "x-stainless-os", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-arch", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-runtime-version", "value_length": 8, "category": "telemetry", "action": "stripped"}], "secret_findings": [], "prompt_preview": "Verify codesign --strict output and summarize binary footprint"}, {"id": 5, "turn_number": 5, "session_id": "anthropic:claude-sonnet-4-5", "created_at": 1794556968.0, "provider": "anthropic", "model": "claude-sonnet-4-5", "path": "/anthropic/v1/messages", "status_code": 400, "latency_ms": 14, "ttft_ms": null, "blocked": true, "has_bucket_breakdown": true, "is_estimated": true, "buckets_are_estimated": true, "bucket_unit": "estimated_tokens", "buckets": {"system_prompt": 0, "workspace_rules": 0, "mcp_and_tools": 0, "tool_results": 0, "conversation": 0, "total_estimated": 0}, "tool_namespaces": [], "usage": {"input_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0, "output_tokens": 0}, "input_tokens": 0, "cached_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 0, "cache_hit_ratio": 0.0, "estimated_cost_usd": 0.0, "header_audit": [{"name": "x-api-key", "value_length": 54, "category": "auth", "action": "redacted"}, {"name": "anthropic-version", "value_length": 10, "category": "protocol", "action": "forwarded"}, {"name": "User-Agent", "value_length": 32, "category": "fingerprint", "action": "normalized"}, {"name": "x-stainless-os", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-arch", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-runtime-version", "value_length": 8, "category": "telemetry", "action": "stripped"}], "secret_findings": [{"rule": "Anthropic API Key", "field": "messages[4].content"}], "prompt_preview": ""}, {"id": 6, "turn_number": 6, "session_id": "anthropic:claude-sonnet-4-5", "created_at": 1794557010.0, "provider": "anthropic", "model": "claude-sonnet-4-5", "path": "/anthropic/v1/messages", "status_code": 200, "latency_ms": 780, "ttft_ms": null, "blocked": false, "has_bucket_breakdown": true, "is_estimated": true, "buckets_are_estimated": true, "bucket_unit": "estimated_tokens", "buckets": {"system_prompt": 3600, "workspace_rules": 2940, "mcp_and_tools": 7490, "tool_results": 18600, "conversation": 3120, "total_estimated": 35750}, "tool_namespaces": [{"namespace": "builtin", "tool_count": 14, "estimated_tokens": 4120}, {"namespace": "mcp:scholar", "tool_count": 8, "estimated_tokens": 1960}, {"namespace": "mcp:context7", "tool_count": 2, "estimated_tokens": 1410}], "usage": {"input_tokens": 8400, "cache_read_tokens": 29800, "cache_write_tokens": 0, "output_tokens": 740}, "input_tokens": 8400, "cached_input_tokens": 29800, "cache_creation_input_tokens": 0, "output_tokens": 740, "cache_hit_ratio": 0.780105, "estimated_cost_usd": 0.04524, "header_audit": [{"name": "x-api-key", "value_length": 54, "category": "auth", "action": "redacted"}, {"name": "anthropic-version", "value_length": 10, "category": "protocol", "action": "forwarded"}, {"name": "User-Agent", "value_length": 32, "category": "fingerprint", "action": "normalized"}, {"name": "x-stainless-os", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-arch", "value_length": 5, "category": "telemetry", "action": "stripped"}, {"name": "x-stainless-runtime-version", "value_length": 8, "category": "telemetry", "action": "stripped"}], "secret_findings": [], "prompt_preview": "Disabled unused MCP servers - re-run release verification"}], "is_demo": true};
 const IS_LIVE_POLL = false;
 const XRAY_AUTH_TOKEN = "";
 let selectedIdx = Math.max(0, (DATA.traces || []).length - 2);
@@ -729,8 +729,9 @@ const I18N = {
     fltBlocked: "Blocked",
     darkTheme: "Dark theme",
     lightPaper: "Light paper",
+    estTag: "Estimated",
     kpi1Lbl: "Estimated prompt tokens",
-    kpi2Lbl: "MCP Tool Share",
+    kpi2Lbl: "MCP Tool Share (Estimated)",
     kpi3Lbl: "Prompt cache hit ratio",
     kpi4Lbl: "Telemetry headers stripped",
     kpi4Sub: "Removed telemetry headers only",
@@ -744,7 +745,7 @@ const I18N = {
     aggCacheWrite: "Cache write",
     aggOutput: "Output",
     aggHitRate: "Hit rate",
-    flameH2: "Turn-by-turn context token flamegraph",
+    flameH2: "Turn-by-turn context token flamegraph (Estimated)",
     legSys: "System prompt",
     legRules: "Workspace rules",
     legMcp: "MCP & tool schemas",
@@ -757,10 +758,10 @@ const I18N = {
     wellConv: "Chat",
     emptyTurns: "No turns match the active filter yet. Launch an agent with <code class='mono'>agent-xray run --open -- claude</code> or scan local Desktop sessions.",
     emptyWell: "Select a turn to inspect its context slice.",
-    mcpH2: "MCP & tool schema token leaderboard",
+    mcpH2: "MCP & tool schema token leaderboard (Estimated)",
     thNs: "Namespace",
     thTools: "Tools",
-    thTokTurn: "Tokens / turn",
+    thTokTurn: "Tokens / turn (Estimated)",
     thShare: "Share",
     emptySchemas: "No tool schemas attached on this turn.",
     auditH2: "Outbound header & secret egress audit",
@@ -792,8 +793,9 @@ const I18N = {
     fltBlocked: "已拦截",
     darkTheme: "深色主题",
     lightPaper: "浅色纸张",
-    kpi1Lbl: "预估输入 Token 总量",
-    kpi2Lbl: "MCP 工具定义占比",
+    estTag: "估算",
+    kpi1Lbl: "估算输入 Token 总量",
+    kpi2Lbl: "MCP 工具定义占比（估算）",
     kpi3Lbl: "提示词缓存命中率",
     kpi4Lbl: "已剥离遥测请求头",
     kpi4Sub: "仅统计实际剥离的遥测头",
@@ -807,7 +809,7 @@ const I18N = {
     aggCacheWrite: "缓存写入",
     aggOutput: "输出",
     aggHitRate: "命中率",
-    flameH2: "逐轮上下文 Token 构成火焰图",
+    flameH2: "逐轮上下文 Token 构成火焰图（估算）",
     legSys: "系统提示词",
     legRules: "工作区规则",
     legMcp: "MCP 与工具定义",
@@ -820,10 +822,10 @@ const I18N = {
     wellConv: "对话",
     emptyTurns: "当前筛选条件下暂无匹配轮次。请运行 <code class='mono'>agent-xray run --open -- claude</code> 捕获实时流量，或扫描本地桌面会话。",
     emptyWell: "请选择任意请求轮次以查看上下文切片解剖。",
-    mcpH2: "MCP 与工具定义 Token 排行榜",
+    mcpH2: "MCP 与工具定义 Token 排行榜（估算）",
     thNs: "命名空间",
     thTools: "工具数",
-    thTokTurn: "每轮 Token",
+    thTokTurn: "每轮 Token（估算）",
     thShare: "占比",
     emptySchemas: "本轮请求未挂载任何工具定义。",
     auditH2: "出站请求头与密钥外泄审计",
@@ -1084,8 +1086,8 @@ function render() {
     ? `${costLabel} · 共 ${allTraces.length} 轮`
     : `${costLabel} · ${allTraces.length} turns`;
   const kpi2Sub = currentLang === "zh"
-    ? `工具定义占用：${totEst > 0 ? fmt(toolDefTok) + ' tok' : t.noData}`
-    : `Tool Definition Tokens: ${totEst > 0 ? fmt(toolDefTok) + ' tok' : t.noData}`;
+    ? `工具定义占用（估算）：${totEst > 0 ? fmt(toolDefTok) + ' tok' : t.noData}`
+    : `Tool Definition Tokens (Estimated): ${totEst > 0 ? fmt(toolDefTok) + ' tok' : t.noData}`;
   const kpi3Sub = currentLang === "zh"
     ? `缓存命中读取 ${fmt(cacheHits)} / ${fmt(promptDenom)} tok`
     : `${fmt(cacheHits)} / ${fmt(promptDenom)} prompt tok`;
@@ -1181,7 +1183,7 @@ function render() {
         .filter(([, v]) => v > 0)
         .map(([col, v, lbl]) => {
           const pct = Math.round((v / tot) * 100);
-          const tip = `${lbl}: ${fmt(v)} tok (${pct}%)`;
+          const tip = `${lbl}: ${fmt(v)} tok (${t.estTag}, ${pct}%)`;
           return `<div class="seg" title="${escapeHtml(tip)}" style="background:${col};width:${((v / tot) * scale).toFixed(2)}%"></div>`;
         })
         .join("");
@@ -1189,7 +1191,7 @@ function render() {
         <button type="button" class="${cls}" onclick="selectTurn(${idx})">
           <div class="turn-top">
             <div class="turn-title"><span class="turn-num tabular">${turnPrefix}</span>${escapeHtml(titleTxt)}</div>
-            <div class="turn-metrics mono"><span>${fmt(b.total_estimated)}&nbsp;tok</span>${statusTag}</div>
+            <div class="turn-metrics mono"><span>${fmt(b.total_estimated)}&nbsp;tok (${escapeHtml(t.estTag)})</span>${statusTag}</div>
           </div>
           <div class="bar-track">${barHtml}</div>
         </button>
@@ -1202,9 +1204,13 @@ function render() {
   if (cur) {
     const cb = cur.buckets || {};
     const cu = cur.usage || {};
-    const wellTitle = currentLang === "zh"
-      ? `第 ${cur.turn_number} 轮上下文解剖`
-      : `Turn ${cur.turn_number} context anatomy`;
+    const wellTitle = cur.has_bucket_breakdown === false
+      ? (currentLang === "zh"
+          ? `第 ${cur.turn_number} 轮上下文解剖`
+          : `Turn ${cur.turn_number} context anatomy`)
+      : (currentLang === "zh"
+          ? `第 ${cur.turn_number} 轮上下文解剖（估算）`
+          : `Turn ${cur.turn_number} context anatomy (Estimated)`);
     const turnCostStr = formatTurnCost(cur.estimated_cost_usd, t);
     if (cur.has_bucket_breakdown === false) {
       const uIn = Number(cu.input_tokens || 0);
@@ -1231,7 +1237,7 @@ function render() {
       wellEl.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
           <strong style="font-size:13.5px">${wellTitle}</strong>
-          <span class="mono" style="font-size:12px;color:var(--color-muted)">${escapeHtml(cur.model)} · ${fmt(cb.total_estimated)}&nbsp;tok · ${escapeHtml(turnCostStr)}</span>
+          <span class="mono" style="font-size:12px;color:var(--color-muted)">${escapeHtml(cur.model)} · ${fmt(cb.total_estimated)}&nbsp;tok (${escapeHtml(t.estTag)}) · ${escapeHtml(turnCostStr)}</span>
         </div>
         <div class="well-grid">
           <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-sys)"></i>${escapeHtml(t.wellSys)}</div><div class="v mono">${fmt(cb.system_prompt)}</div></div>

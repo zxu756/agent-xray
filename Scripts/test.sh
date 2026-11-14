@@ -177,15 +177,16 @@ case "$MODE" in
         usage
       fi
     fi
-    if [[ "$MS" != "0" ]]; then
+    if [[ "$MS" != "0" && "$MS" != "1" ]]; then
       echo "Milestone M${MS} acceptance script is not implemented yet." >&2
       exit 2
     fi
 
     run_pytest_or_unittest_all
 
-    if [[ ! -x Scripts/acceptance/m0-acceptance.sh ]]; then
-      echo "Missing executable Scripts/acceptance/m0-acceptance.sh" >&2
+    ACCEPT_SCRIPT="Scripts/acceptance/m${MS}-acceptance.sh"
+    if [[ ! -x "$ACCEPT_SCRIPT" ]]; then
+      echo "Missing executable ${ACCEPT_SCRIPT}" >&2
       exit 1
     fi
     if [[ ! -x Scripts/acceptance/readme-commands.sh ]]; then
@@ -196,14 +197,14 @@ case "$MODE" in
     if [[ "$RECORD" -eq 1 ]]; then
       REC_TMP="$(mktemp -d "${TMPDIR:-/tmp}/xray-record.XXXXXX")"
       trap 'rm -rf "$REC_TMP"' EXIT
-      Scripts/acceptance/m0-acceptance.sh | tee "$REC_TMP/m0-acceptance.raw"
+      "$ACCEPT_SCRIPT" | tee "$REC_TMP/m${MS}-acceptance.raw"
       Scripts/acceptance/readme-commands.sh | tee "$REC_TMP/readme-commands.raw"
-      scrub_report_paths "$REC_TMP/m0-acceptance.raw" "${ROOT_DIR}/reports/m0-acceptance.txt"
+      scrub_report_paths "$REC_TMP/m${MS}-acceptance.raw" "${ROOT_DIR}/reports/m${MS}-acceptance.txt"
       scrub_report_paths "$REC_TMP/readme-commands.raw" "${ROOT_DIR}/reports/readme-commands.txt"
       rm -rf "$REC_TMP"
       trap - EXIT
     else
-      Scripts/acceptance/m0-acceptance.sh
+      "$ACCEPT_SCRIPT"
       Scripts/acceptance/readme-commands.sh
     fi
     ;;
@@ -211,12 +212,10 @@ case "$MODE" in
   release)
     run_pytest_or_unittest_all
     Scripts/acceptance/m0-acceptance.sh
+    Scripts/acceptance/m1-acceptance.sh
     Scripts/acceptance/readme-commands.sh
-    if [[ "${XRAY_REAL_API:-0}" == "1" ]]; then
-      echo "XRAY_REAL_API=1 enabled: live tokenizer accuracy harness belongs to M1 (not implemented in M0)." >&2
-      exit 2
-    else
-      echo "Real API checks: SKIPPED (XRAY_REAL_API!=1)"
+    if [[ "${XRAY_REAL_API:-0}" != "1" ]]; then
+      echo "SKIPPED (没跑): XRAY_REAL_API!=1; requires user approval for paid API calibration"
     fi
     ;;
 

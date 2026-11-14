@@ -15,6 +15,7 @@ HONEST_LABELS: dict[str, dict[str, str]] = {
         "stripped_telemetry_headers": "Stripped Telemetry Headers",
         "unknown_price": "Unknown price",
         "no_data": "No data",
+        "estimated": "Estimated",
     },
     "zh": {
         "tool_definition_tokens": "工具定义占用",
@@ -23,6 +24,7 @@ HONEST_LABELS: dict[str, dict[str, str]] = {
         "stripped_telemetry_headers": "去掉的遥测头",
         "unknown_price": "未知价格",
         "no_data": "没有数据",
+        "estimated": "估算",
     },
 }
 

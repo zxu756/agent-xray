@@ -622,11 +622,17 @@ grep -Fq 'oklch(0.515 0.092 188 / 0.12)' src/agent_xray/ui_html.py
 grep -Fq 'oklch(0.665 0.175 32 / 0.28)' src/agent_xray/ui_html.py
 echo "grep -rnE '\\b0\\.(12|28|34)\\b' src/ --exclude='ui_html.py' -> 0 matches; ui_html.py oklch 0.12 & 0.28 intact (PASS)"
 
-if grep -in 'streaming' pyproject.toml; then
-  echo "FAIL: pyproject.toml still claims streaming proxy!" >&2
-  exit 1
+if grep -Eq 'read1\(|"read1"' src/agent_xray/proxy.py; then
+  grep -iq 'streaming' pyproject.toml
+  grep -iq 'streaming' README.md
+  echo "pyproject.toml & README.md streaming description matches proxy.py read1() implementation (PASS)"
+else
+  if grep -in 'streaming' pyproject.toml; then
+    echo "FAIL: pyproject.toml claims streaming proxy without read1()!" >&2
+    exit 1
+  fi
+  echo "grep -in 'streaming' pyproject.toml -> 0 matches (PASS)"
 fi
-echo "grep -in 'streaming' pyproject.toml -> 0 matches (PASS)"
 
 # ---------------------------------------------------------------------------
 # Supplemental Row (W1): Scripted Mutation Suite in Isolated Temp Copy

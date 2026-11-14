@@ -208,6 +208,122 @@ class PrivacyAndRedactionTests(unittest.TestCase):
         self.assertNotIn("display_value", by_name["X-Custom-Token"])
         self.assertNotIn("value", by_name["X-Custom-Token"])
 
+    def test_m1_preserve_openai_org_project_and_duplicate_headers(self) -> None:
+        inbound = [
+            ("openai-organization", "org-billing-123"),
+            ("openai-project", "proj_billing_456"),
+            ("anthropic-beta", "prompt-caching-2024-07-31"),
+            ("anthropic-beta", "token-efficient-tools-2025-02-19"),
+            ("X-Multi", "first"),
+            ("X-Multi", "second"),
+            ("x-stainless-os", "MacOS"),
+            ("sentry-trace", "1234-5678"),
+            ("baggage", "sentry-env=prod"),
+            ("User-Agent", "claude-cli/2.1.0 (darwin arm64)"),
+        ]
+        outbound, audit = audit_and_prepare_headers(inbound, strip_telemetry=True)
+        self.assertEqual(outbound["openai-organization"], "org-billing-123")
+        self.assertEqual(outbound["openai-project"], "proj_billing_456")
+        self.assertNotIn("x-stainless-os", outbound)
+        self.assertNotIn("sentry-trace", outbound)
+        self.assertNotIn("baggage", outbound)
+
+        pairs = outbound.pairs()
+        beta_vals = [v for k, v in pairs if k.lower() == "anthropic-beta"]
+        multi_vals = [v for k, v in pairs if k == "X-Multi"]
+        self.assertEqual(beta_vals, ["prompt-caching-2024-07-31", "token-efficient-tools-2025-02-19"])
+        self.assertEqual(multi_vals, ["first", "second"])
+
+        stripped_names = {a.name.lower() for a in audit if a.action == "stripped"}
+        self.assertEqual(stripped_names, {"x-stainless-os", "sentry-trace", "baggage"})
+
+    def test_m1_pem_prose_false_positive_and_request_surfaces_gzip_query_headers_escapes(self) -> None:
+        import gzip
+        import zlib
+        from agent_xray.privacy import decode_request_body_for_inspection, scan_request_for_secrets
+
+        ant = "sk-ant-api03-" + ("ABCDEFGHIJ" * 3)
+        proj = "sk-proj-" + ("AbCdEfGhIj" * 3)
+
+        # 1. PEM header mentioned in prose (even mid-sentence) must NOT false-positive
+        prose_cases = [
+            "PEM files start with -----BEGIN PRIVATE KEY-----",
+            "PKCS8 PEM files start with -----BEGIN PRIVATE KEY----- and end with -----END PRIVATE KEY----- in RFC 7468.",
+            "Example header: -----BEGIN RSA PRIVATE KEY----- (without key body).",
+        ]
+        for prose in prose_cases:
+            with self.subTest(prose=prose):
+                self.assertEqual(scan_body_for_secrets(prose), [])
+
+        # Real PEM blocks with newline + base64 material MUST still match
+        real_pems = [
+            "-----BEGIN PRIVATE KEY-----\nAAAA",
+            "-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA",
+            "-----BEGIN DSA PRIVATE KEY-----\nAAAA",
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----",
+        ]
+        for pem in real_pems:
+            with self.subTest(pem=pem[:30]):
+                self.assertGreaterEqual(len(scan_body_for_secrets(pem)), 1)
+
+        # 2. JSON \u0073 escape and invalid-JSON raw body
+        escaped_raw = (
+            b'{"model":"m","messages":[{"role":"user","content":"k \\u0073k-ant-api03-'
+            + (b"ABCDEFGHIJ" * 3)
+            + b'"}]}'
+        )
+        res_esc = scan_request_for_secrets(raw_path="/v1/messages", raw_body=escaped_raw)
+        self.assertGreaterEqual(len(res_esc.findings), 1)
+
+        invalid_json_raw = b"not json deploy " + ant.encode("utf-8")
+        res_inv = scan_request_for_secrets(raw_path="/v1/messages", raw_body=invalid_json_raw)
+        self.assertGreaterEqual(len(res_inv.findings), 1)
+
+        # 3. Gzip & deflate compressed request bodies + zip-bomb cap
+        gz_body = gzip.compress(json.dumps({"input": f"deploy {ant}"}).encode("utf-8"))
+        res_gz = scan_request_for_secrets(
+            raw_path="/openai/v1/embeddings",
+            raw_body=gz_body,
+            content_encoding="gzip",
+        )
+        self.assertGreaterEqual(len(res_gz.findings), 1)
+        self.assertIsNone(res_gz.compression_error)
+
+        deflate_body = zlib.compress(json.dumps({"input": f"deploy {ant}"}).encode("utf-8"))
+        res_def = scan_request_for_secrets(
+            raw_path="/openai/v1/embeddings",
+            raw_body=deflate_body,
+            content_encoding="deflate",
+        )
+        self.assertGreaterEqual(len(res_def.findings), 1)
+
+        big_zeros_gz = gzip.compress(b"0" * 200_000)
+        _, err_reason = decode_request_body_for_inspection(big_zeros_gz, "gzip", max_bytes=65_536)
+        self.assertEqual(err_reason, "decompressed_size_exceeded")
+
+        # 4. Query string & non-auth headers vs legit auth headers
+        res_query = scan_request_for_secrets(
+            raw_path=f"/anthropic/v1/messages?key={ant}",
+            raw_body=b'{"model":"m","messages":[{"role":"user","content":"hi"}]}',
+        )
+        self.assertGreaterEqual(len(res_query.findings), 1)
+        self.assertTrue(any(f.field.startswith("url.query") for f in res_query.findings))
+
+        res_custom_hdr = scan_request_for_secrets(
+            raw_path="/anthropic/v1/messages",
+            headers=[("X-Custom-Token", ant), ("x-api-key", ant)],
+            raw_body=b'{"model":"m","messages":[{"role":"user","content":"hi"}]}',
+        )
+        self.assertEqual(len(res_custom_hdr.findings), 1)
+        self.assertEqual(res_custom_hdr.findings[0].field, "header.X-Custom-Token")
+
+        res_legit_auth = scan_request_for_secrets(
+            raw_path="/openai/v1/chat/completions",
+            headers=[("Authorization", f"Bearer {proj}"), ("x-api-key", ant)],
+            raw_body=b'{"model":"g","messages":[{"role":"user","content":"hi"}]}',
+        )
+        self.assertEqual(res_legit_auth.findings, [])
+
 
 if __name__ == "__main__":
     unittest.main()

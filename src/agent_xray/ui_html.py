@@ -50,17 +50,17 @@ def render_inspector_html(
     f_blk_txt = "已拦截" if is_zh else "Blocked"
     mode_btn_txt = "深色主题" if is_zh else "Dark theme"
 
-    flame_h2 = "逐轮上下文 Token 构成火焰图" if is_zh else "Turn-by-turn context token flamegraph"
+    flame_h2 = "逐轮上下文 Token 构成火焰图（估算）" if is_zh else "Turn-by-turn context token flamegraph (Estimated)"
     leg_sys = "系统提示词" if is_zh else "System prompt"
     leg_rules = "工作区规则" if is_zh else "Workspace rules"
     leg_mcp = "MCP 与工具定义" if is_zh else "MCP & tool schemas"
     leg_res = "工具输出与文件" if is_zh else "Tool outputs & files"
     leg_conv = "对话历史" if is_zh else "Conversation"
 
-    mcp_h2 = "MCP 与工具定义 Token 排行榜" if is_zh else "MCP & tool schema token leaderboard"
+    mcp_h2 = "MCP 与工具定义 Token 排行榜（估算）" if is_zh else "MCP & tool schema token leaderboard (Estimated)"
     th_ns = "命名空间" if is_zh else "Namespace"
     th_tools = "工具数" if is_zh else "Tools"
-    th_tok_turn = "每轮 Token" if is_zh else "Tokens / turn"
+    th_tok_turn = "每轮 Token（估算）" if is_zh else "Tokens / turn (Estimated)"
     th_share = "占比" if is_zh else "Share"
 
     audit_h2 = "出站请求头与密钥外泄审计" if is_zh else "Outbound header & secret egress audit"
@@ -802,8 +802,9 @@ const I18N = {{
     fltBlocked: "Blocked",
     darkTheme: "Dark theme",
     lightPaper: "Light paper",
+    estTag: "Estimated",
     kpi1Lbl: "Estimated prompt tokens",
-    kpi2Lbl: "MCP Tool Share",
+    kpi2Lbl: "MCP Tool Share (Estimated)",
     kpi3Lbl: "Prompt cache hit ratio",
     kpi4Lbl: "Telemetry headers stripped",
     kpi4Sub: "Removed telemetry headers only",
@@ -817,7 +818,7 @@ const I18N = {{
     aggCacheWrite: "Cache write",
     aggOutput: "Output",
     aggHitRate: "Hit rate",
-    flameH2: "Turn-by-turn context token flamegraph",
+    flameH2: "Turn-by-turn context token flamegraph (Estimated)",
     legSys: "System prompt",
     legRules: "Workspace rules",
     legMcp: "MCP & tool schemas",
@@ -830,10 +831,10 @@ const I18N = {{
     wellConv: "Chat",
     emptyTurns: "No turns match the active filter yet. Launch an agent with <code class='mono'>agent-xray run --open -- claude</code> or scan local Desktop sessions.",
     emptyWell: "Select a turn to inspect its context slice.",
-    mcpH2: "MCP & tool schema token leaderboard",
+    mcpH2: "MCP & tool schema token leaderboard (Estimated)",
     thNs: "Namespace",
     thTools: "Tools",
-    thTokTurn: "Tokens / turn",
+    thTokTurn: "Tokens / turn (Estimated)",
     thShare: "Share",
     emptySchemas: "No tool schemas attached on this turn.",
     auditH2: "Outbound header & secret egress audit",
@@ -865,8 +866,9 @@ const I18N = {{
     fltBlocked: "已拦截",
     darkTheme: "深色主题",
     lightPaper: "浅色纸张",
-    kpi1Lbl: "预估输入 Token 总量",
-    kpi2Lbl: "MCP 工具定义占比",
+    estTag: "估算",
+    kpi1Lbl: "估算输入 Token 总量",
+    kpi2Lbl: "MCP 工具定义占比（估算）",
     kpi3Lbl: "提示词缓存命中率",
     kpi4Lbl: "已剥离遥测请求头",
     kpi4Sub: "仅统计实际剥离的遥测头",
@@ -880,7 +882,7 @@ const I18N = {{
     aggCacheWrite: "缓存写入",
     aggOutput: "输出",
     aggHitRate: "命中率",
-    flameH2: "逐轮上下文 Token 构成火焰图",
+    flameH2: "逐轮上下文 Token 构成火焰图（估算）",
     legSys: "系统提示词",
     legRules: "工作区规则",
     legMcp: "MCP 与工具定义",
@@ -893,10 +895,10 @@ const I18N = {{
     wellConv: "对话",
     emptyTurns: "当前筛选条件下暂无匹配轮次。请运行 <code class='mono'>agent-xray run --open -- claude</code> 捕获实时流量，或扫描本地桌面会话。",
     emptyWell: "请选择任意请求轮次以查看上下文切片解剖。",
-    mcpH2: "MCP 与工具定义 Token 排行榜",
+    mcpH2: "MCP 与工具定义 Token 排行榜（估算）",
     thNs: "命名空间",
     thTools: "工具数",
-    thTokTurn: "每轮 Token",
+    thTokTurn: "每轮 Token（估算）",
     thShare: "占比",
     emptySchemas: "本轮请求未挂载任何工具定义。",
     auditH2: "出站请求头与密钥外泄审计",
@@ -1157,8 +1159,8 @@ function render() {{
     ? `${{costLabel}} · 共 ${{allTraces.length}} 轮`
     : `${{costLabel}} · ${{allTraces.length}} turns`;
   const kpi2Sub = currentLang === "zh"
-    ? `工具定义占用：${{totEst > 0 ? fmt(toolDefTok) + ' tok' : t.noData}}`
-    : `Tool Definition Tokens: ${{totEst > 0 ? fmt(toolDefTok) + ' tok' : t.noData}}`;
+    ? `工具定义占用（估算）：${{totEst > 0 ? fmt(toolDefTok) + ' tok' : t.noData}}`
+    : `Tool Definition Tokens (Estimated): ${{totEst > 0 ? fmt(toolDefTok) + ' tok' : t.noData}}`;
   const kpi3Sub = currentLang === "zh"
     ? `缓存命中读取 ${{fmt(cacheHits)}} / ${{fmt(promptDenom)}} tok`
     : `${{fmt(cacheHits)}} / ${{fmt(promptDenom)}} prompt tok`;
@@ -1254,7 +1256,7 @@ function render() {{
         .filter(([, v]) => v > 0)
         .map(([col, v, lbl]) => {{
           const pct = Math.round((v / tot) * 100);
-          const tip = `${{lbl}}: ${{fmt(v)}} tok (${{pct}}%)`;
+          const tip = `${{lbl}}: ${{fmt(v)}} tok (${{t.estTag}}, ${{pct}}%)`;
           return `<div class="seg" title="${{escapeHtml(tip)}}" style="background:${{col}};width:${{((v / tot) * scale).toFixed(2)}}%"></div>`;
         }})
         .join("");
@@ -1262,7 +1264,7 @@ function render() {{
         <button type="button" class="${{cls}}" onclick="selectTurn(${{idx}})">
           <div class="turn-top">
             <div class="turn-title"><span class="turn-num tabular">${{turnPrefix}}</span>${{escapeHtml(titleTxt)}}</div>
-            <div class="turn-metrics mono"><span>${{fmt(b.total_estimated)}}&nbsp;tok</span>${{statusTag}}</div>
+            <div class="turn-metrics mono"><span>${{fmt(b.total_estimated)}}&nbsp;tok (${{escapeHtml(t.estTag)}})</span>${{statusTag}}</div>
           </div>
           <div class="bar-track">${{barHtml}}</div>
         </button>
@@ -1275,9 +1277,13 @@ function render() {{
   if (cur) {{
     const cb = cur.buckets || {{}};
     const cu = cur.usage || {{}};
-    const wellTitle = currentLang === "zh"
-      ? `第 ${{cur.turn_number}} 轮上下文解剖`
-      : `Turn ${{cur.turn_number}} context anatomy`;
+    const wellTitle = cur.has_bucket_breakdown === false
+      ? (currentLang === "zh"
+          ? `第 ${{cur.turn_number}} 轮上下文解剖`
+          : `Turn ${{cur.turn_number}} context anatomy`)
+      : (currentLang === "zh"
+          ? `第 ${{cur.turn_number}} 轮上下文解剖（估算）`
+          : `Turn ${{cur.turn_number}} context anatomy (Estimated)`);
     const turnCostStr = formatTurnCost(cur.estimated_cost_usd, t);
     if (cur.has_bucket_breakdown === false) {{
       const uIn = Number(cu.input_tokens || 0);
@@ -1304,7 +1310,7 @@ function render() {{
       wellEl.innerHTML = `
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
           <strong style="font-size:13.5px">${{wellTitle}}</strong>
-          <span class="mono" style="font-size:12px;color:var(--color-muted)">${{escapeHtml(cur.model)}} · ${{fmt(cb.total_estimated)}}&nbsp;tok · ${{escapeHtml(turnCostStr)}}</span>
+          <span class="mono" style="font-size:12px;color:var(--color-muted)">${{escapeHtml(cur.model)}} · ${{fmt(cb.total_estimated)}}&nbsp;tok (${{escapeHtml(t.estTag)}}) · ${{escapeHtml(turnCostStr)}}</span>
         </div>
         <div class="well-grid">
           <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-sys)"></i>${{escapeHtml(t.wellSys)}}</div><div class="v mono">${{fmt(cb.system_prompt)}}</div></div>

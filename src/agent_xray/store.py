@@ -29,8 +29,12 @@ def _rate_entry(
     out: float,
     source_url: str,
     verified_at: str = "unverified",
+    *,
+    long_context_threshold_tokens: int | None = None,
+    long_context_input_multiplier: float = 1.0,
+    long_context_output_multiplier: float = 1.0,
 ) -> dict[str, Any]:
-    return {
+    entry: dict[str, Any] = {
         "input": inp,
         "cache_read": cache_read,
         "cache_write": cache_write,
@@ -38,11 +42,29 @@ def _rate_entry(
         "source_url": source_url,
         "verified_at": verified_at,
     }
+    if long_context_threshold_tokens is not None:
+        entry["long_context_threshold_tokens"] = long_context_threshold_tokens
+        entry["long_context_input_multiplier"] = long_context_input_multiplier
+        entry["long_context_output_multiplier"] = long_context_output_multiplier
+    return entry
 
 
 MODEL_PRICING_USD_PER_MTOK: list[tuple[str, dict[str, Any]]] = [
-    # Anthropic Claude Sonnet ($3 / $0.30 / $3.75 / $15 per MTok; >200k surcharge unmodeled in M0)
-    ("claude-sonnet-4", _rate_entry(3.00, 0.30, 3.75, 15.00, _ANTHROPIC_PRICING_URL)),
+    # Anthropic Claude Sonnet 4 family ($3 / $0.30 / $3.75 / $15 per MTok <= 200k prompt tokens;
+    # > 200,000 prompt tokens: 2x input/cache rates [$6 / $0.60 / $7.50] and 1.5x output [$22.50])
+    (
+        "claude-sonnet-4",
+        _rate_entry(
+            3.00,
+            0.30,
+            3.75,
+            15.00,
+            _ANTHROPIC_PRICING_URL,
+            long_context_threshold_tokens=200_000,
+            long_context_input_multiplier=2.0,
+            long_context_output_multiplier=1.5,
+        ),
+    ),
     ("claude-3-7-sonnet", _rate_entry(3.00, 0.30, 3.75, 15.00, _ANTHROPIC_PRICING_URL)),
     ("claude-3.7-sonnet", _rate_entry(3.00, 0.30, 3.75, 15.00, _ANTHROPIC_PRICING_URL)),
     ("claude-3-5-sonnet", _rate_entry(3.00, 0.30, 3.75, 15.00, _ANTHROPIC_PRICING_URL)),
@@ -143,11 +165,27 @@ def compute_turn_cost_usd(
     rates = resolve_model_pricing(model)
     if rates is None:
         return None
+    in_tok = max(0, int(input_tokens))
+    cr_tok = max(0, int(cache_read_tokens))
+    cw_tok = max(0, int(cache_write_tokens))
+    out_tok = max(0, int(output_tokens))
+    prompt_total = in_tok + cr_tok + cw_tok
+
+    in_mult = 1.0
+    out_mult = 1.0
+    threshold = rates.get("long_context_threshold_tokens")
+    if isinstance(threshold, int) and threshold > 0 and prompt_total > threshold:
+        in_mult = float(rates.get("long_context_input_multiplier", 1.0))
+        out_mult = float(rates.get("long_context_output_multiplier", 1.0))
+
     cost = (
-        max(0, int(input_tokens)) * rates["input"]
-        + max(0, int(cache_read_tokens)) * rates["cache_read"]
-        + max(0, int(cache_write_tokens)) * rates["cache_write"]
-        + max(0, int(output_tokens)) * rates["output"]
+        (
+            in_tok * rates["input"]
+            + cr_tok * rates["cache_read"]
+            + cw_tok * rates["cache_write"]
+        )
+        * in_mult
+        + out_tok * rates["output"] * out_mult
     ) / 1_000_000.0
     return round(cost, 6)
 
@@ -205,6 +243,7 @@ class TraceStore:
                     path TEXT NOT NULL,
                     status_code INTEGER NOT NULL,
                     latency_ms INTEGER NOT NULL,
+                    ttft_ms REAL DEFAULT NULL,
                     blocked INTEGER NOT NULL DEFAULT 0,
                     buckets_json TEXT NOT NULL,
                     namespaces_json TEXT NOT NULL,
@@ -215,6 +254,12 @@ class TraceStore:
                 )
                 """
             )
+            existing_cols = {
+                str(row[1])
+                for row in self._conn.execute("PRAGMA table_info(traces)").fetchall()
+            }
+            if "ttft_ms" not in existing_cols:
+                self._conn.execute("ALTER TABLE traces ADD COLUMN ttft_ms REAL DEFAULT NULL")
             self._conn.commit()
 
     def _execute_write(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Cursor:
@@ -244,10 +289,19 @@ class TraceStore:
         secret_findings: list[dict[str, Any]],
         prompt_preview: str = "",
         store_previews: bool = False,
+        ttft_ms: float | None = None,
         created_at: float | None = None,
     ) -> int:
         ts = created_at if created_at is not None else time.time()
         safe_path = normalize_trace_path(path)
+        safe_ttft: float | None
+        if ttft_ms is None or isinstance(ttft_ms, bool):
+            safe_ttft = None
+        else:
+            try:
+                safe_ttft = round(float(ttft_ms), 3)
+            except (TypeError, ValueError):
+                safe_ttft = None
         safe_headers = [
             {
                 "name": str(h.get("name") or h.get("header") or ""),
@@ -279,10 +333,10 @@ class TraceStore:
             cur = self._execute_write(
                 """
                 INSERT INTO traces (
-                    created_at, provider, model, path, status_code, latency_ms,
+                    created_at, provider, model, path, status_code, latency_ms, ttft_ms,
                     blocked, buckets_json, namespaces_json, usage_json,
                     headers_json, secrets_json, prompt_preview
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     ts,
@@ -291,6 +345,7 @@ class TraceStore:
                     safe_path,
                     status_code,
                     latency_ms,
+                    safe_ttft,
                     1 if blocked else 0,
                     buckets,
                     tool_namespaces,
@@ -356,6 +411,12 @@ class TraceStore:
             )
             hit_ratio = compute_cache_hit_ratio(in_tok, cache_read_tok, cache_write_tok)
             session_key = str(raw_buckets.get("session_id") or f"{provider}:{model}")
+            raw_ttft = r["ttft_ms"] if "ttft_ms" in r.keys() else None
+            ttft_val = (
+                round(float(raw_ttft), 3)
+                if isinstance(raw_ttft, (int, float)) and not isinstance(raw_ttft, bool)
+                else None
+            )
 
             result.append(
                 {
@@ -368,11 +429,19 @@ class TraceStore:
                     "path": r["path"],
                     "status_code": status_code,
                     "latency_ms": r["latency_ms"],
+                    "ttft_ms": ttft_val,
                     "blocked": blocked,
                     "has_bucket_breakdown": has_bucket_breakdown,
+                    "is_estimated": has_bucket_breakdown,
+                    "buckets_are_estimated": has_bucket_breakdown,
+                    "bucket_unit": "estimated_tokens" if has_bucket_breakdown else "none",
                     "buckets": buckets,
                     "tool_namespaces": json.loads(r["namespaces_json"]),
                     "usage": norm_usage,
+                    "input_tokens": in_tok,
+                    "cached_input_tokens": cache_read_tok,
+                    "cache_creation_input_tokens": cache_write_tok,
+                    "output_tokens": out_tok,
                     "cache_hit_ratio": hit_ratio,
                     "estimated_cost_usd": est_cost,
                     "header_audit": json.loads(r["headers_json"]),
@@ -387,6 +456,9 @@ class TraceStore:
         totals: dict[str, Any] = {
             "turn_count": len(traces),
             "blocked_count": sum(1 for t in traces if t["blocked"]),
+            "is_estimated": True,
+            "buckets_are_estimated": True,
+            "bucket_unit": "estimated_tokens",
             "total_estimated_input": 0,
             "total_actual_input": 0,
             "total_cache_read": 0,

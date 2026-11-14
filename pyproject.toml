@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agent-xray"
 version = "0.2.0"
-description = "Local loopback LLM API metering proxy, 5-bucket context attribution, and secret redaction for AI coding agents"
+description = "Local loopback streaming SSE/HTTP LLM metering proxy, 5-bucket context attribution, and secret redaction for AI coding agents"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"

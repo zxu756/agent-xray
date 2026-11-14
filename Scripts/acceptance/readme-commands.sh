@@ -146,7 +146,7 @@ upstream_thread = threading.Thread(target=upstream_srv.serve_forever, daemon=Tru
 upstream_thread.start()
 
 # Create two local mock agent scripts to stand in for `<your-agent-command>` / `<你的智能体命令>`:
-# 1) mock_agent_normal.py -> sends normal turn WITH query-string secret (verifies metadata recorded + query stripped)
+# 1) mock_agent_normal.py -> sends normal turn WITH query params & auth header (verifies 200 + query stripped + auth redacted)
 # 2) mock_agent_blocked.py -> sends turn WITH secret in query, model, and body (verifies HTTP 400 + sanitized record)
 mock_normal = tmp_dir / "mock_agent_normal.py"
 mock_normal.write_text(
@@ -162,7 +162,7 @@ payload = {
     "messages": [{"role": "user", "content": "Summarize repository test layout"}],
 }
 req = urllib.request.Request(
-    f"{base}/v1/messages?key=sk-ant-api03-ReadmeNormalQuerySecret111111111111",
+    f"{base}/v1/messages?beta=true&client_trace=ReadmeNormalQueryParam",
     data=json.dumps(payload).encode("utf-8"),
     headers={
         "Content-Type": "application/json",
@@ -276,7 +276,7 @@ def assert_db_x15_normal_and_blocked(normal_db: pathlib.Path, blocked_db: pathli
     assert row_n[3] == 200 and row_n[4] == 0, row_n
     assert row_n[8] == "", f"{label}: prompt_preview should be empty by default: {row_n[8]!r}"
     assert json.loads(row_n[5])["total_estimated"] > 0
-    for forbidden in ("sk-ant-", "ReadmeNormalQuerySecret", "MockAgentSessionKey", "Summarize repository test layout"):
+    for forbidden in ("sk-ant-", "ReadmeNormalQueryParam", "MockAgentSessionKey", "Summarize repository test layout"):
         assert forbidden not in dump_n, f"{label}: leaked {forbidden!r} in normal DB dump"
 
     # Check blocked DB
@@ -359,6 +359,7 @@ try:
                 tokens = [
                     t.replace("/tmp/", f"{doc_tmp}/")
                     .replace("docs/demo-inspector.html", str(doc_tmp / "demo-inspector.html"))
+                    .replace("http://127.0.0.1:9000", f"http://127.0.0.1:{upstream_port}")
                     for t in tokens
                 ]
 
@@ -412,11 +413,15 @@ try:
                             except Exception:
                                 time.sleep(0.05)
 
-                        # 1) Normal request with query secret
+                        # 1) Normal request with benign query param + auth header
                         req_ok = urllib.request.Request(
-                            f"http://127.0.0.1:{free_port}/anthropic/v1/messages?key=sk-ant-api03-ServeQueryNormal555555555555",
+                            f"http://127.0.0.1:{free_port}/anthropic/v1/messages?beta=true&req_tag=ServeQueryNormal555555555555",
                             data=json.dumps({"model": "claude-sonnet-4-5", "messages": [{"role": "user", "content": "ping"}]}).encode("utf-8"),
-                            headers={"Content-Type": "application/json", "x-stainless-arch": "arm64"},
+                            headers={
+                                "Content-Type": "application/json",
+                                "x-api-key": "sk-ant-api03-ServeAuthKey555555555555",
+                                "x-stainless-arch": "arm64",
+                            },
                         )
                         with urllib.request.urlopen(req_ok, timeout=5) as r_ok:
                             assert r_ok.status == 200
@@ -447,7 +452,7 @@ try:
                     assert len(rows_s) == 2, rows_s
                     assert rows_s[0] == ("claude-sonnet-4-5", "/anthropic/v1/messages", 200, 0, ""), rows_s[0]
                     assert rows_s[1] == ("claude-[REDACTED]", "/anthropic/v1/messages", 400, 1, ""), rows_s[1]
-                    for forbidden in ("sk-ant-", "ServeQueryNormal", "ServeQueryBlocked", "ServeModelBlocked", "ServeBodyBlocked"):
+                    for forbidden in ("sk-ant-", "ServeQueryNormal", "ServeAuthKey", "ServeQueryBlocked", "ServeModelBlocked", "ServeBodyBlocked"):
                         assert forbidden not in dump_s, f"Leaked {forbidden!r} in serve DB dump"
                     print(f"[EXEC PASS] {doc_name} block#{b_idx}.{c_idx}: `{cmd_str}` -> exit=0, rows=2 (200 & 400), dump_secret_hits=0")
                     continue
@@ -463,6 +468,7 @@ try:
                     demo_file = doc_tmp / "demo-inspector.html"
                     html_txt = demo_file.read_text(encoding="utf-8")
                     assert "[DEMO" in html_txt and ("MCP Tool Share" in html_txt or "MCP 工具定义占比" in html_txt)
+                    assert ("(Estimated)" in html_txt or "（估算）" in html_txt), "Missing Estimated label in demo HTML"
                 elif "desktop" in tokens:
                     assert ("Imported 3 recent" in combined or "已导入 3 条" in combined), combined
                     assert ("No data" in combined or "没有数据" in combined), combined

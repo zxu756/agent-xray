@@ -183,6 +183,96 @@ class StorePricingCacheAndLabelsTests(unittest.TestCase):
             self.assertNotIn(banned, html_en)
             self.assertNotIn(banned, html_zh)
 
+    def test_m1_sonnet_over_200k_tiered_pricing_ttft_and_estimated_labels(self) -> None:
+        store = TraceStore(":memory:")
+        # Turn 1: <= 200k prompt tokens on claude-sonnet-4-5 (exact 200,000 boundary -> base tier)
+        # (50,000 * 3.00 + 140,000 * 0.30 + 10,000 * 3.75 + 1,000 * 15.00) / 1e6 = 0.2445
+        store.record_turn(
+            provider="anthropic",
+            model="claude-sonnet-4-5",
+            path="/anthropic/v1/messages",
+            status_code=200,
+            latency_ms=410,
+            ttft_ms=42.5,
+            blocked=False,
+            buckets={
+                "system_prompt": 1000,
+                "workspace_rules": 500,
+                "mcp_and_tools": 2000,
+                "tool_results": 500,
+                "conversation": 1000,
+                "total_estimated": 5000,
+            },
+            tool_namespaces=[{"namespace": "mcp:rea", "tool_count": 4, "estimated_tokens": 2000}],
+            usage={
+                "input_tokens": 50_000,
+                "cache_read_tokens": 140_000,
+                "cache_write_tokens": 10_000,
+                "output_tokens": 1_000,
+            },
+            header_audit=[],
+            secret_findings=[],
+        )
+        # Turn 2: > 200k prompt tokens on claude-sonnet-4-5 (220,000 prompt tokens -> 2x input/cache, 1.5x output)
+        # (50,000 * 6.00 + 160,000 * 0.60 + 10,000 * 7.50 + 1,000 * 22.50) / 1e6 = 0.4935
+        store.record_turn(
+            provider="anthropic",
+            model="claude-sonnet-4-5",
+            path="/anthropic/v1/messages",
+            status_code=200,
+            latency_ms=890,
+            ttft_ms=68.25,
+            blocked=False,
+            buckets={
+                "system_prompt": 1000,
+                "workspace_rules": 500,
+                "mcp_and_tools": 2000,
+                "tool_results": 500,
+                "conversation": 1000,
+                "total_estimated": 5000,
+            },
+            tool_namespaces=[{"namespace": "mcp:rea", "tool_count": 4, "estimated_tokens": 2000}],
+            usage={
+                "input_tokens": 50_000,
+                "cache_read_tokens": 160_000,
+                "cache_write_tokens": 10_000,
+                "output_tokens": 1_000,
+            },
+            header_audit=[],
+            secret_findings=[],
+        )
+        data = store.build_summary()
+        store.close()
+
+        t1, t2 = data["traces"][0], data["traces"][1]
+        self.assertAlmostEqual(t1["estimated_cost_usd"], 0.2445, places=6)
+        self.assertAlmostEqual(t2["estimated_cost_usd"], 0.4935, places=6)
+        self.assertAlmostEqual(t1["ttft_ms"], 42.5, places=3)
+        self.assertAlmostEqual(t2["ttft_ms"], 68.25, places=3)
+
+        # JSON explicit estimated markers (without polluting numeric tr["buckets"] values!)
+        self.assertTrue(t1["is_estimated"])
+        self.assertTrue(t1["buckets_are_estimated"])
+        self.assertEqual(t1["bucket_unit"], "estimated_tokens")
+        self.assertTrue(all(isinstance(v, int) for v in t1["buckets"].values()))
+        self.assertTrue(data["summary"]["is_estimated"])
+        self.assertEqual(data["summary"]["bucket_unit"], "estimated_tokens")
+
+        # Downstream programmatic convenience fields
+        self.assertEqual(t1["input_tokens"], 50_000)
+        self.assertEqual(t1["cached_input_tokens"], 140_000)
+        self.assertEqual(t1["cache_creation_input_tokens"], 10_000)
+        self.assertEqual(t1["output_tokens"], 1_000)
+
+        # Bilingual HTML Inspector explicit "Estimated" / "估算" labels
+        html_en = render_inspector_html(data, live_poll=False, lang="en")
+        html_zh = render_inspector_html(data, live_poll=False, lang="zh")
+        self.assertIn("Turn-by-turn context token flamegraph (Estimated)", html_en)
+        self.assertIn("MCP Tool Share (Estimated)", html_en)
+        self.assertIn("逐轮上下文 Token 构成火焰图（估算）", html_zh)
+        self.assertIn("MCP 工具定义占比（估算）", html_zh)
+        self.assertIn("估算输入 Token 总量", html_zh)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -120,6 +120,7 @@ class AgentXRayTests(unittest.TestCase):
                 {"type": "function", "name": "mcp_box.shell", "parameters": {"type": "object"}},
             ],
             "input": [
+                {"role": "developer", "content": "<user_rules>Workspace rules active.</user_rules>"},
                 {"role": "system", "content": "Core developer harness."},
                 {"role": "user", "content": "Run test suite"},
                 {"type": "function_call_output", "output": "Ran 12 tests in 0.04s OK"},
@@ -130,12 +131,12 @@ class AgentXRayTests(unittest.TestCase):
         self.assertEqual(
             res.buckets.to_dict(),
             {
-                "system_prompt": 6,
-                "workspace_rules": 11,
+                "system_prompt": 17,
+                "workspace_rules": 13,
                 "mcp_and_tools": 22,
                 "tool_results": 7,
                 "conversation": 4,
-                "total_estimated": 50,
+                "total_estimated": 63,
             },
         )
         self.assertEqual(extract_tool_namespace("mcp_box.shell"), "mcp:box")

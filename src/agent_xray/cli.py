@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -13,7 +14,7 @@ from pathlib import Path
 from . import __version__
 from .i18n import HONEST_LABELS, SUPPORTED_LANG_CHOICES, format_usd, resolve_lang
 from .local_sessions import import_local_desktop_sessions
-from .proxy import ProxyConfig, XRayHTTPServer
+from .proxy import ProxyConfig, XRayHTTPServer, validate_upstream_url
 from .store import TraceStore, build_demo_dataset, purge_trace_db
 from .ui_html import render_inspector_html
 
@@ -67,8 +68,8 @@ def _print_terminal_summary(store: TraceStore, lang: str = "en") -> None:
 
     if is_zh:
         if has_any_buckets and est_input > 0:
-            tool_str = f"{labels['tool_definition_tokens']}：{tool_def_tok:,} / ~{est_input:,} tok"
-            mcp_str = f"{labels['mcp_tool_share']}：{mcp_share_pct}%"
+            tool_str = f"{labels['tool_definition_tokens']}：{tool_def_tok:,} / ~{est_input:,} tok（{labels['estimated']}）"
+            mcp_str = f"{labels['mcp_tool_share']}：{mcp_share_pct}%（{labels['estimated']}）"
         else:
             tool_str = f"{labels['tool_definition_tokens']}：{labels['no_data']}"
             mcp_str = f"{labels['mcp_tool_share']}：{labels['no_data']}"
@@ -84,14 +85,14 @@ def _print_terminal_summary(store: TraceStore, lang: str = "en") -> None:
         for ns in data["top_namespaces"][:5]:
             print(
                 f"  - {ns['namespace']:<18} {ns['max_tools']:>3} 个工具   "
-                f"{ns['per_turn_tokens']:>7,} tok/轮",
+                f"{ns['per_turn_tokens']:>7,} tok/轮（{labels['estimated']}）",
                 file=sys.stderr,
             )
         return
 
     if has_any_buckets and est_input > 0:
-        tool_str = f"{labels['tool_definition_tokens']}: {tool_def_tok:,} / ~{est_input:,} tok"
-        mcp_str = f"{labels['mcp_tool_share']}: {mcp_share_pct}%"
+        tool_str = f"{labels['tool_definition_tokens']}: {tool_def_tok:,} / ~{est_input:,} tok ({labels['estimated']})"
+        mcp_str = f"{labels['mcp_tool_share']}: {mcp_share_pct}% ({labels['estimated']})"
     else:
         tool_str = f"{labels['tool_definition_tokens']}: {labels['no_data']}"
         mcp_str = f"{labels['mcp_tool_share']}: {labels['no_data']}"
@@ -108,9 +109,28 @@ def _print_terminal_summary(store: TraceStore, lang: str = "en") -> None:
     for ns in data["top_namespaces"][:5]:
         print(
             f"  - {ns['namespace']:<18} {ns['max_tools']:>3} tools   "
-            f"{ns['per_turn_tokens']:>7,} tok/turn",
+            f"{ns['per_turn_tokens']:>7,} tok/turn ({labels['estimated']})",
             file=sys.stderr,
         )
+
+
+def _resolve_upstreams(
+    args: argparse.Namespace,
+    *,
+    chain_parent_base_urls: bool,
+) -> tuple[str, str]:
+    cli_up = (getattr(args, "upstream", None) or "").strip()
+    cli_ant = (getattr(args, "anthropic_upstream", None) or "").strip()
+    cli_oai = (getattr(args, "openai_upstream", None) or "").strip()
+
+    env_ant_up = (os.environ.get("AGENT_XRAY_ANTHROPIC_UPSTREAM") or "").strip()
+    env_oai_up = (os.environ.get("AGENT_XRAY_OPENAI_UPSTREAM") or "").strip()
+    parent_ant = (os.environ.get("ANTHROPIC_BASE_URL") or "").strip() if chain_parent_base_urls else ""
+    parent_oai = (os.environ.get("OPENAI_BASE_URL") or "").strip() if chain_parent_base_urls else ""
+
+    ant_raw = cli_ant or cli_up or env_ant_up or parent_ant or "https://api.anthropic.com"
+    oai_raw = cli_oai or cli_up or env_oai_up or parent_oai or "https://api.openai.com"
+    return validate_upstream_url(ant_raw), validate_upstream_url(oai_raw)
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -127,11 +147,20 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print(msg, file=sys.stderr)
         return 2
 
+    try:
+        ant_upstream, oai_upstream = _resolve_upstreams(args, chain_parent_base_urls=False)
+    except ValueError as exc:
+        err_msg = f"错误：无效的上游地址（{exc}）" if is_zh else f"Error: {exc}"
+        print(err_msg, file=sys.stderr)
+        return 2
+
     host = "0.0.0.0" if args.allow_lan else "127.0.0.1"
     store = TraceStore(args.db)
     cfg = ProxyConfig(
         host=host,
         port=args.port,
+        anthropic_upstream=ant_upstream,
+        openai_upstream=oai_upstream,
         strip_telemetry_headers=args.strip_telemetry_headers,
         block_secrets=args.block_secrets,
         store_previews=args.store_previews,
@@ -150,11 +179,21 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print(f"  Live Inspector UI : http://127.0.0.1:{bound_port}/_xray/")
     print(f"  ANTHROPIC_BASE_URL=http://127.0.0.1:{bound_port}/anthropic")
     print(f"  OPENAI_BASE_URL=http://127.0.0.1:{bound_port}/openai/v1")
+    def _sigterm_to_interrupt(signum: int, frame: object) -> None:
+        raise KeyboardInterrupt
+
+    prev_sigterm = None
+    if threading.current_thread() is threading.main_thread():
+        prev_sigterm = signal.getsignal(signal.SIGTERM)
+        signal.signal(signal.SIGTERM, _sigterm_to_interrupt)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        if prev_sigterm is not None:
+            signal.signal(signal.SIGTERM, prev_sigterm)
+        srv.wait_for_inflight(timeout=2.0)
         srv.server_close()
         _print_terminal_summary(store, lang=lang)
         store.close()
@@ -177,10 +216,20 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(msg, file=sys.stderr)
         return 2
 
+    # Inspect existing ANTHROPIC_BASE_URL / OPENAI_BASE_URL in parent env BEFORE overwriting
+    try:
+        ant_upstream, oai_upstream = _resolve_upstreams(args, chain_parent_base_urls=True)
+    except ValueError as exc:
+        err_msg = f"错误：无效的上游地址（{exc}）" if is_zh else f"Error: {exc}"
+        print(err_msg, file=sys.stderr)
+        return 2
+
     store = TraceStore(args.db)
     cfg = ProxyConfig(
         host="127.0.0.1",
         port=args.port,
+        anthropic_upstream=ant_upstream,
+        openai_upstream=oai_upstream,
         strip_telemetry_headers=args.strip_telemetry_headers,
         block_secrets=args.block_secrets,
         store_previews=args.store_previews,
@@ -217,6 +266,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         completed = subprocess.run(cmd, env=env)
         return int(completed.returncode)
     finally:
+        srv.wait_for_inflight(timeout=2.0)
         srv.shutdown()
         srv.server_close()
         _print_terminal_summary(store, lang=lang)
@@ -277,11 +327,21 @@ def cmd_desktop(args: argparse.Namespace) -> int:
         print(f"  Live Inspector UI : {url}", file=sys.stderr)
     if args.open_ui:
         webbrowser.open(url)
+    def _sigterm_to_interrupt(signum: int, frame: object) -> None:
+        raise KeyboardInterrupt
+
+    prev_sigterm = None
+    if threading.current_thread() is threading.main_thread():
+        prev_sigterm = signal.getsignal(signal.SIGTERM)
+        signal.signal(signal.SIGTERM, _sigterm_to_interrupt)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        if prev_sigterm is not None:
+            signal.signal(signal.SIGTERM, prev_sigterm)
+        srv.wait_for_inflight(timeout=2.0)
         srv.server_close()
         _print_terminal_summary(store, lang=lang)
         store.close()
@@ -345,6 +405,9 @@ def build_parser() -> argparse.ArgumentParser:
         _add_subparser_lang_arg(p)
         p.add_argument("--port", type=int, default=8788 if name == "serve" else 0, help="Loopback TCP port (0 = ephemeral)")
         p.add_argument("--db", type=str, default=None, help="Path to SQLite trace database")
+        p.add_argument("--upstream", type=str, default=None, help="Upstream gateway base URL for both Anthropic and OpenAI requests")
+        p.add_argument("--anthropic-upstream", type=str, default=None, help="Override upstream base URL for Anthropic requests")
+        p.add_argument("--openai-upstream", type=str, default=None, help="Override upstream base URL for OpenAI requests")
         p.add_argument("--strip-telemetry-headers", action="store_true", help="Strip SDK telemetry headers and normalize User-Agent")
         p.add_argument("--block-secrets", action="store_true", help="Abort requests containing live API keys or private keys before upstream egress")
         p.add_argument("--store-previews", action="store_true", help="Opt-in: store secret-redacted 140-char prompt previews (off by default)")
