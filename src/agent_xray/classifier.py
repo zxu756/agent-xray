@@ -29,15 +29,10 @@ _INLINE_RULE_TAG_RE = re.compile(
 # injected workspace rule file dump rather than prose merely mentioning a filename.
 _STANDALONE_RULE_HEADER_RE = re.compile(
     r"^\s*(?:"
-    r"#+\s*(?:AGENTS|CLAUDE)\.md\b"
+    r"#+\s*(?:AGENTS\.md|CLAUDE\.md|\.cursorrules|copilot-instructions\.md)\b"
     r"|Contents of [^\n]{0,200}?(?:CLAUDE\.md|AGENTS\.md|\.cursorrules|copilot-instructions\.md)\b"
     r"|Instructions from [^\n]{0,200}?(?:CLAUDE\.md|AGENTS\.md|\.cursorrules|copilot-instructions\.md)\b"
     r")",
-    re.IGNORECASE,
-)
-
-_DEVELOPER_RULE_FILE_RE = re.compile(
-    r"(?:AGENTS\.md|CLAUDE\.md|\.cursorrules|copilot-instructions\.md)",
     re.IGNORECASE,
 )
 
@@ -168,7 +163,6 @@ def _classify_text_block(
     text: str,
     *,
     default_bucket: str,
-    developer_role: bool = False,
 ) -> str:
     """Classifies one text block into buckets, splitting embedded rule tags cleanly.
 
@@ -182,9 +176,7 @@ def _classify_text_block(
         if is_rule_tag:
             buckets.workspace_rules += estimate_tokens(seg)
             continue
-        if _STANDALONE_RULE_HEADER_RE.search(seg) or (
-            developer_role and _DEVELOPER_RULE_FILE_RE.search(seg)
-        ):
+        if _STANDALONE_RULE_HEADER_RE.search(seg):
             buckets.workspace_rules += estimate_tokens(seg)
             continue
         toks = estimate_tokens(seg)
@@ -440,7 +432,6 @@ def _classify_openai(payload: dict[str, Any], *, store_previews: bool = False) -
 
         # 4. Role-based messages (`system`, `developer`, `user`, `assistant`)
         default_bucket = "system_prompt" if role in ("system", "developer") else "conversation"
-        is_dev = role == "developer"
 
         content = item.get("content")
         if isinstance(content, str) and content:
@@ -448,7 +439,6 @@ def _classify_openai(payload: dict[str, Any], *, store_previews: bool = False) -
                 buckets,
                 content,
                 default_bucket=default_bucket,
-                developer_role=is_dev,
             )
             if role == "user" and store_previews and non_rule.strip():
                 preview = _build_redacted_preview(non_rule, store_previews=True)
@@ -459,7 +449,6 @@ def _classify_openai(payload: dict[str, Any], *, store_previews: bool = False) -
                         buckets,
                         part,
                         default_bucket=default_bucket,
-                        developer_role=is_dev,
                     )
                     if role == "user" and store_previews and non_rule.strip():
                         preview = _build_redacted_preview(non_rule, store_previews=True)
@@ -477,7 +466,6 @@ def _classify_openai(payload: dict[str, Any], *, store_previews: bool = False) -
                             buckets,
                             txt,
                             default_bucket=default_bucket,
-                            developer_role=is_dev,
                         )
                         if role == "user" and store_previews and non_rule.strip():
                             preview = _build_redacted_preview(non_rule, store_previews=True)
@@ -530,11 +518,27 @@ def _classify_openai(payload: dict[str, Any], *, store_previews: bool = False) -
     )
 
 
+_TERMINAL_SSE_EVENTS = frozenset(
+    {
+        "message_stop",
+        "response.completed",
+        "response.incomplete",
+        "response.failed",
+        "response.cancelled",
+        "error",
+    }
+)
+
+
 class IncrementalResponseUsageParser:
     """Streaming O(1)-memory SSE & JSON usage extractor supporting gzip/deflate responses."""
 
     def __init__(self, *, is_sse: bool, content_encoding: str | None = None) -> None:
         self.is_sse = is_sse
+        self.saw_terminal_event = False
+        self.sse_frame_truncated = False
+        self.decompression_truncated = False
+        self.json_truncated = False
         self._usage: dict[str, int] = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -559,6 +563,14 @@ class IncrementalResponseUsageParser:
             self._decomp = zlib.decompressobj(16 + zlib.MAX_WBITS)
         elif enc == "deflate":
             self._decomp = zlib.decompressobj(zlib.MAX_WBITS)
+
+    @property
+    def is_truncated(self) -> bool:
+        if self.decompression_truncated:
+            return True
+        if self.is_sse:
+            return bool(self.sse_frame_truncated or not self.saw_terminal_event)
+        return bool(self.json_truncated)
 
     def _decompress_chunk(self, chunk: bytes) -> bytes:
         if self._decomp is None or self._decompress_failed or not chunk:
@@ -586,18 +598,53 @@ class IncrementalResponseUsageParser:
             self._decompress_failed = True
             return b""
 
-    def _consume_sse_line(self, line: str) -> None:
+    def _consume_sse_line(self, line: str, *, at_eof: bool = False) -> None:
         stripped = line.strip()
+        if not stripped or stripped.startswith(":"):
+            return
+        if stripped.startswith("event:"):
+            ev_name = stripped[6:].strip()
+            if ev_name in _TERMINAL_SSE_EVENTS:
+                self.saw_terminal_event = True
+            return
         if not stripped.startswith("data:"):
+            if at_eof:
+                self.sse_frame_truncated = True
             return
         data_str = stripped[5:].strip()
-        if not data_str or data_str == "[DONE]" or "usage" not in data_str:
+        if not data_str:
+            return
+        if data_str == "[DONE]":
+            self.saw_terminal_event = True
+            return
+        has_marker = (
+            "usage" in data_str
+            or "message_stop" in data_str
+            or "response.completed" in data_str
+            or "response.incomplete" in data_str
+            or "response.failed" in data_str
+            or "response.cancelled" in data_str
+            or "finish_reason" in data_str
+            or '"error"' in data_str
+            or at_eof
+        )
+        if not has_marker:
             return
         try:
             evt = json.loads(data_str)
         except ValueError:
+            if data_str.startswith("{") or at_eof:
+                self.sse_frame_truncated = True
             return
         if isinstance(evt, dict):
+            ev_type = str(evt.get("type") or "")
+            if ev_type in _TERMINAL_SSE_EVENTS:
+                self.saw_terminal_event = True
+            choices = evt.get("choices")
+            if isinstance(choices, list) and any(
+                isinstance(c, dict) and c.get("finish_reason") is not None for c in choices
+            ):
+                self.saw_terminal_event = True
             if isinstance(evt.get("usage"), dict):
                 _merge_usage_dict(self._usage, evt["usage"])
             msg = evt.get("message")
@@ -655,36 +702,47 @@ class IncrementalResponseUsageParser:
             self._feed_decoded_text(self._utf8_decoder.decode(raw, final=False))
 
     def finish(self) -> dict[str, int]:
-        if self._decomp is not None and not self._decompress_failed:
-            try:
-                flushed = self._decomp.flush()
-                if flushed:
-                    self._feed_decoded_text(self._utf8_decoder.decode(flushed, final=False))
-            except zlib.error:
-                pass
+        if self._decomp is not None:
+            if self._decompress_failed:
+                self.decompression_truncated = True
+            else:
+                try:
+                    flushed = self._decomp.flush()
+                    if flushed:
+                        self._feed_decoded_text(self._utf8_decoder.decode(flushed, final=False))
+                except zlib.error:
+                    self.decompression_truncated = True
+                if not self._decomp.eof:
+                    self.decompression_truncated = True
         tail_txt = self._utf8_decoder.decode(b"", final=True)
         if tail_txt:
             self._feed_decoded_text(tail_txt)
 
         if self.is_sse:
             if self._line_buf and not self._line_overflow:
-                self._consume_sse_line(self._line_buf)
+                self._consume_sse_line(self._line_buf, at_eof=True)
             self._line_buf = ""
             return dict(self._usage)
 
-        if not self._json_overflow and self._json_parts:
-            full_text = "".join(self._json_parts)
-            self._json_parts.clear()
-            try:
-                obj = json.loads(full_text)
-                if isinstance(obj, dict):
-                    if isinstance(obj.get("usage"), dict):
-                        _merge_usage_dict(self._usage, obj["usage"])
-                    resp = obj.get("response")
-                    if isinstance(resp, dict) and isinstance(resp.get("usage"), dict):
-                        _merge_usage_dict(self._usage, resp["usage"])
-            except ValueError:
-                pass
+        if not self._json_overflow:
+            if not self._json_parts:
+                self.json_truncated = True
+            else:
+                full_text = "".join(self._json_parts)
+                self._json_parts.clear()
+                if not full_text.strip():
+                    self.json_truncated = True
+                else:
+                    try:
+                        obj = json.loads(full_text)
+                        if isinstance(obj, dict):
+                            if isinstance(obj.get("usage"), dict):
+                                _merge_usage_dict(self._usage, obj["usage"])
+                            resp = obj.get("response")
+                            if isinstance(resp, dict) and isinstance(resp.get("usage"), dict):
+                                _merge_usage_dict(self._usage, resp["usage"])
+                    except ValueError:
+                        self.json_truncated = True
         return dict(self._usage)
 
 

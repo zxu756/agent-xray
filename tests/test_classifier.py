@@ -242,6 +242,162 @@ class ClassifierHonestyTests(unittest.TestCase):
             },
         )
 
+    def test_xr2_readme_cjk_ratio_matches_estimate_tokens_constant(self) -> None:
+        import re
+        from pathlib import Path
+
+        cjk_1000 = estimate_tokens("中" * 1000)
+        self.assertEqual(cjk_1000, 850)
+        expected_chars_per_token = round(1000.0 / cjk_1000, 2)  # 1.18
+
+        repo_root = Path(__file__).resolve().parents[1]
+        readme_en = (repo_root / "README.md").read_text(encoding="utf-8")
+        readme_zh = (repo_root / "README.zh-CN.md").read_text(encoding="utf-8")
+
+        self.assertNotIn("1.55", readme_en)
+        self.assertNotIn("1.55", readme_zh)
+
+        m_en = re.search(r"`~([0-9]+\.[0-9]+)`\s*CJK chars/token", readme_en)
+        self.assertIsNotNone(m_en, "Missing CJK chars/token figure in README.md")
+        self.assertAlmostEqual(float(m_en.group(1)), expected_chars_per_token, places=2)
+
+        m_zh = re.search(r"CJK\s*约\s*`([0-9]+\.[0-9]+)`\s*字符/Token", readme_zh)
+        self.assertIsNotNone(m_zh, "Missing CJK 字符/Token figure in README.zh-CN.md")
+        self.assertAlmostEqual(float(m_zh.group(1)), expected_chars_per_token, places=2)
+
+    def test_xr3_developer_role_prose_mentioning_agents_or_claude_md_stays_in_system_prompt(self) -> None:
+        # 1. Chat Completions: developer prose mentioning AGENTS.md / CLAUDE.md -> system_prompt
+        prose = "Follow repo style; see AGENTS.md and CLAUDE.md if needed."
+        chat_res = classify_request_payload(
+            "/openai/v1/chat/completions",
+            {
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "developer", "content": prose},
+                    {"role": "user", "content": "Hello"},
+                ],
+            },
+        )
+        b_chat = chat_res.buckets.to_dict()
+        self.assertEqual(b_chat["system_prompt"], estimate_tokens(prose))
+        self.assertEqual(b_chat["workspace_rules"], 0)
+        self.assertEqual(b_chat["conversation"], estimate_tokens("Hello"))
+
+        # 2. Responses API: developer input_text prose mentioning .cursorrules / copilot-instructions.md -> system_prompt
+        resp_prose = "Respect repository conventions; check .cursorrules or copilot-instructions.md when present."
+        resp_res = classify_request_payload(
+            "/openai/v1/responses",
+            {
+                "model": "gpt-5",
+                "input": [
+                    {"role": "developer", "content": [{"type": "input_text", "text": resp_prose}]},
+                ],
+            },
+        )
+        b_resp = resp_res.buckets.to_dict()
+        self.assertEqual(b_resp["system_prompt"], estimate_tokens(resp_prose))
+        self.assertEqual(b_resp["workspace_rules"], 0)
+
+        # 3. Developer message mixing prose + <user_rules> tag splits cleanly; standalone "# AGENTS.md" goes to workspace_rules
+        mixed_dev = "Developer harness header. <user_rules>Always run pytest first.</user_rules>"
+        mixed_res = classify_request_payload(
+            "/openai/v1/chat/completions",
+            {
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "developer", "content": mixed_dev},
+                    {"role": "developer", "content": "# AGENTS.md\nStrict rule dump body."},
+                ],
+            },
+        )
+        b_mixed = mixed_res.buckets.to_dict()
+        self.assertEqual(b_mixed["system_prompt"], estimate_tokens("Developer harness header. "))
+        self.assertEqual(
+            b_mixed["workspace_rules"],
+            estimate_tokens("<user_rules>Always run pytest first.</user_rules>")
+            + estimate_tokens("# AGENTS.md\nStrict rule dump body."),
+        )
+
+    def test_xr1_calibration_routine_executes_against_local_fake_upstream(self) -> None:
+        import importlib.util
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[1]
+        m1_sh = (repo_root / "Scripts" / "acceptance" / "m1-acceptance.sh").read_text(encoding="utf-8")
+        self.assertNotIn("import classify_request\n", m1_sh)
+        self.assertNotIn("classify_request(", m1_sh)
+
+        cal_path = repo_root / "Scripts" / "acceptance" / "calibrate_tokenizer.py"
+        self.assertTrue(cal_path.is_file(), "Missing Scripts/acceptance/calibrate_tokenizer.py")
+        spec = importlib.util.spec_from_file_location("calibrate_tokenizer", cal_path)
+        assert spec is not None and spec.loader is not None
+        cal_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cal_mod)
+
+        class FakeCalibrationUpstream(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:
+                length = int(self.headers.get("Content-Length") or "0")
+                raw = self.rfile.read(length)
+                payload = json.loads(raw.decode("utf-8"))
+                est = classify_request_payload(self.path, payload).buckets.total_estimated
+                # Simulate vendor tokenizer returning exact token count +10%
+                actual_in = max(1, int(round(est * 1.10)))
+                if "messages" in self.path and "chat/completions" not in self.path:
+                    resp_obj = {
+                        "id": "msg_cal",
+                        "type": "message",
+                        "model": payload.get("model", "claude-3-5-haiku-latest"),
+                        "usage": {
+                            "input_tokens": actual_in,
+                            "cache_read_input_tokens": 0,
+                            "cache_creation_input_tokens": 0,
+                            "output_tokens": 1,
+                        },
+                    }
+                else:
+                    resp_obj = {
+                        "id": "chatcmpl_cal",
+                        "model": payload.get("model", "gpt-4o-mini"),
+                        "usage": {
+                            "prompt_tokens": actual_in,
+                            "completion_tokens": 1,
+                        },
+                    }
+                body = json.dumps(resp_obj).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeCalibrationUpstream)
+        port = srv.server_address[1]
+        th = threading.Thread(target=srv.serve_forever, daemon=True)
+        th.start()
+        try:
+            report = cal_mod.run_tokenizer_calibration(
+                anthropic_base_url=f"http://127.0.0.1:{port}",
+                openai_base_url=f"http://127.0.0.1:{port}/v1",
+                anthropic_api_key="test-local-ant-key",
+                openai_api_key="test-local-oai-key",
+                sample_count=3,
+            )
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+        self.assertEqual(len(report["anthropic"]["samples"]), 3)
+        self.assertEqual(len(report["openai"]["samples"]), 3)
+        self.assertGreaterEqual(report["anthropic"]["max_error"], 0.0)
+        self.assertLess(report["anthropic"]["max_error"], 0.25)
+        self.assertGreaterEqual(report["openai"]["max_error"], 0.0)
+        self.assertLess(report["openai"]["max_error"], 0.25)
+
 
 if __name__ == "__main__":
     unittest.main()

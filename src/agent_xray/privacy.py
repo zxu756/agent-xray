@@ -54,66 +54,98 @@ TELEMETRY_EXACT_HEADERS = {
 
 OS_LEAK_TOKENS = ("darwin", "mac os", "arm64", "aarch64", "x86_64", "linux", "win32")
 
-_PEM_MATERIAL_HEAD = r"(?:Proc-Type:|DEK-Info:|[A-Za-z0-9+/=]{4,}(?=[ \t]*(?:\r?\n|-----END|$)))"
+_PEM_MATERIAL_HEAD = (
+    r"(?:(?i:Proc-Type:|DEK-Info:)|"
+    r"[A-Za-z0-9+/=]{4,}(?=[ \t]*(?:\r?\n|(?i:-----END)|$)))"
+)
+_MAX_UNQUOTE_ROUNDS = 8
 
 SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "PEM Private Key",
         re.compile(
-            r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[ \t]*\r?\n"
+            r"(?i:-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----)[ \t]*\r?\n"
             r"(?=" + _PEM_MATERIAL_HEAD + r")"
-            r"(?:.*?-----END [A-Z0-9 ]*PRIVATE KEY-----|[A-Za-z0-9+/=:\r\n \t,-]+)",
+            r"(?:.*?(?i:-----END [A-Z0-9 ]*PRIVATE KEY-----)|[A-Za-z0-9+/=:\r\n \t,-]+)",
             re.DOTALL,
         ),
     ),
     (
         "Anthropic API Key",
-        re.compile(r"sk-ant-(?![xX]{8,}(?![A-Za-z0-9_-]))[A-Za-z0-9_-]{8,}"),
+        re.compile(r"(?i:sk-ant-)(?![xX]{8,}(?![A-Za-z0-9_-]))[A-Za-z0-9_-]{8,}"),
     ),
     (
         "OpenAI Project Key",
-        re.compile(r"sk-(?:proj|svcacct)-(?![xX]{8,}(?![A-Za-z0-9_-]))[A-Za-z0-9_-]{8,}"),
+        re.compile(r"(?i:sk-(?:proj|svcacct)-)(?![xX]{8,}(?![A-Za-z0-9_-]))[A-Za-z0-9_-]{8,}"),
     ),
     (
         "OpenRouter API Key",
-        re.compile(r"sk-or-v1-(?![xX]{8,}(?![A-Za-z0-9_-]))[A-Za-z0-9_-]{8,}"),
+        re.compile(r"(?i:sk-or-v1-)(?![xX]{8,}(?![A-Za-z0-9_-]))[A-Za-z0-9_-]{8,}"),
     ),
     (
         "OpenAI API Key",
         re.compile(
-            r"(?<![A-Za-z0-9])sk-(?!(?:ssh|ecdsa|ant|proj|svcacct|or-v1)-)"
+            r"(?<![A-Za-z0-9])(?i:sk-(?!(?:ssh|ecdsa|ant|proj|svcacct|or-v1)-))"
             r"(?![xX]{20,}(?![A-Za-z0-9_-]))[A-Za-z0-9_-]{20,}"
         ),
     ),
     (
         "GitHub PAT",
-        re.compile(r"(?:ghp|gho|ghu|ghs|ghr|github_pat)_(?![xX]{20,}(?![A-Za-z0-9_]))[A-Za-z0-9_]{20,}"),
+        re.compile(
+            r"(?i:(?:ghp|gho|ghu|ghs|ghr|github_pat)_)"
+            r"(?![xX]{20,}(?![A-Za-z0-9_]))[A-Za-z0-9_]{20,}"
+        ),
     ),
     (
         "AWS Access Key ID",
         re.compile(
-            r"(?<![A-Z0-9])AKIA(?!IOSFODNN7EXAMPLE)(?!X{16}(?![0-9A-Z]))[0-9A-Z]{16}(?![A-Z0-9])"
+            r"(?<![A-Za-z0-9])(?i:AKIA(?!IOSFODNN7EXAMPLE)(?!X{16}(?![0-9A-Z]))[0-9A-Z]{16})(?![A-Za-z0-9])"
         ),
     ),
     (
         "Slack Token",
-        re.compile(r"xox[baprs]-[0-9A-Za-z-]{16,}"),
+        re.compile(r"(?i:xox[baprs]-)(?![xX]{16,}(?![0-9A-Za-z-]))[0-9A-Za-z-]{16,}"),
     ),
     (
         "Google API Key",
-        re.compile(r"(?<![A-Za-z0-9])AIza[0-9A-Za-z_-]{30,}"),
+        re.compile(r"(?<![A-Za-z0-9])(?i:AIza)(?![xX]{30,}(?![0-9A-Za-z_-]))[0-9A-Za-z_-]{30,}"),
     ),
     (
         "JWT Token",
-        re.compile(r"(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+        re.compile(
+            r"(?<![A-Za-z0-9])(?i:eyJ)[A-Za-z0-9_-]{8,}\.(?i:eyJ)[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"
+        ),
     ),
 ]
 
 _UNCLOSED_PEM_REDACT_RE = re.compile(
-    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[ \t]*\r?\n(?=" + _PEM_MATERIAL_HEAD + r").*",
+    r"(?i:-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----)[ \t]*\r?\n(?=" + _PEM_MATERIAL_HEAD + r").*",
     re.DOTALL,
 )
 _UNICODE_ESCAPE_RE = re.compile(r"\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})")
+
+
+def _unquote_iteratively(
+    text: str,
+    *,
+    max_rounds: int = _MAX_UNQUOTE_ROUNDS,
+    plus: bool = False,
+) -> list[str]:
+    """Iteratively percent-decodes text until stable or max_rounds is reached."""
+    if not text:
+        return []
+    variants = [text]
+    cur = text
+    decoder = urllib.parse.unquote_plus if plus else urllib.parse.unquote
+    for _ in range(max_rounds):
+        if "%" not in cur and not (plus and "+" in cur):
+            break
+        nxt = decoder(cur)
+        if nxt == cur:
+            break
+        variants.append(nxt)
+        cur = nxt
+    return variants
 
 
 class HeaderPairs:
@@ -396,18 +428,37 @@ def _decode_unicode_escapes(text: str) -> str:
     return _UNICODE_ESCAPE_RE.sub(_repl, text)
 
 
+def _has_direct_secret_match(text: str) -> bool:
+    if not text:
+        return False
+    for _, pattern in SECRET_PATTERNS:
+        if pattern.search(text):
+            return True
+    return bool(_UNCLOSED_PEM_REDACT_RE.search(text))
+
+
+def _redact_direct_matches(text: str) -> str:
+    scrubbed = text
+    for _, pattern in SECRET_PATTERNS:
+        scrubbed = pattern.sub("[REDACTED]", scrubbed)
+    scrubbed = _UNCLOSED_PEM_REDACT_RE.sub("[REDACTED]", scrubbed)
+    return scrubbed
+
+
 def scan_body_for_secrets(raw_text: str, *, field: str = "body") -> list[SecretFinding]:
-    """Detects live credential patterns in text without storing any secret characters."""
+    """Detects live credential patterns in text (including multi-round URL-encoded text) without storing secrets."""
     if not raw_text:
         return []
     findings: list[SecretFinding] = []
     seen: set[tuple[str, str]] = set()
-    for rule_name, pattern in SECRET_PATTERNS:
-        if pattern.search(raw_text):
-            key = (rule_name, field)
-            if key not in seen:
-                seen.add(key)
-                findings.append(SecretFinding(rule=rule_name, field=field))
+    candidates = _unquote_iteratively(raw_text) if "%" in raw_text else [raw_text]
+    for candidate in candidates:
+        for rule_name, pattern in SECRET_PATTERNS:
+            if pattern.search(candidate):
+                key = (rule_name, field)
+                if key not in seen:
+                    seen.add(key)
+                    findings.append(SecretFinding(rule=rule_name, field=field))
     return findings
 
 
@@ -478,32 +529,34 @@ def scan_request_for_secrets(
                 seen.add(key)
                 findings.append(item)
 
-    # 1. URL path & query string
+    # 1. URL path & query string (iteratively unquoted up to _MAX_UNQUOTE_ROUNDS)
     if raw_path:
         parts = urllib.parse.urlsplit(raw_path)
-        for path_variant in {parts.path, urllib.parse.unquote(parts.path)}:
+        for path_variant in _unquote_iteratively(parts.path):
             if path_variant:
                 _add(scan_body_for_secrets(path_variant, field="url.path"))
         if parts.query:
             query_rules_before = len(findings)
             for qk, qv in urllib.parse.parse_qsl(parts.query, keep_blank_values=True):
-                _add(scan_body_for_secrets(qk, field="url.query.<key>"))
+                for qk_variant in _unquote_iteratively(qk, plus=True):
+                    _add(scan_body_for_secrets(qk_variant, field="url.query.<key>"))
                 safe_qk = redact_secrets_in_text(qk) or "param"
-                _add(scan_body_for_secrets(qv, field=f"url.query.{safe_qk}"))
+                for qv_variant in _unquote_iteratively(qv, plus=True):
+                    _add(scan_body_for_secrets(qv_variant, field=f"url.query.{safe_qk}"))
             if len(findings) == query_rules_before:
-                _add(scan_body_for_secrets(urllib.parse.unquote_plus(parts.query), field="url.query"))
+                for q_variant in _unquote_iteratively(parts.query, plus=True):
+                    _add(scan_body_for_secrets(q_variant, field="url.query"))
 
     # 2. Request headers (exempting only upstream API auth header values)
     for h_name, h_val in headers:
-        _add(scan_body_for_secrets(h_name, field="header.<name>"))
+        for hn_variant in _unquote_iteratively(h_name):
+            _add(scan_body_for_secrets(hn_variant, field="header.<name>"))
         if h_name.lower() in LEGIT_UPSTREAM_AUTH_HEADERS:
             continue
         safe_h_name = redact_secrets_in_text(h_name)
         field_name = f"header.{safe_h_name}"
-        _add(scan_body_for_secrets(h_val, field=field_name))
-        unquoted_val = urllib.parse.unquote(h_val)
-        if unquoted_val != h_val:
-            _add(scan_body_for_secrets(unquoted_val, field=field_name))
+        for hv_variant in _unquote_iteratively(h_val):
+            _add(scan_body_for_secrets(hv_variant, field=field_name))
 
     # 3. Request body (with bounded gzip/deflate decompression)
     inspected_body, comp_err = decode_request_body_for_inspection(
@@ -533,22 +586,23 @@ def redact_secrets_in_text(text: str) -> str:
     """Replaces all matched credentials and PEM private key blocks before any truncation."""
     if not text:
         return ""
-    scrubbed = text
-    for _, pattern in SECRET_PATTERNS:
-        scrubbed = pattern.sub("[REDACTED]", scrubbed)
-    scrubbed = _UNCLOSED_PEM_REDACT_RE.sub("[REDACTED]", scrubbed)
+    scrubbed = _redact_direct_matches(text)
+    if "%" in scrubbed:
+        stages = _unquote_iteratively(scrubbed)
+        if any(_has_direct_secret_match(stage) for stage in stages[1:]):
+            return _redact_direct_matches(stages[-1])
     return scrubbed
 
 
 def normalize_trace_path(raw_path: str) -> str:
-    """Strips URL query/fragment components and redacts any secret in the path."""
+    """Strips URL query/fragment components and redacts any secret in the path across iterative percent-decoding."""
     if not raw_path:
         return ""
     stripped = raw_path
     if "?" in stripped or (stripped.startswith("/") and "#" in stripped):
         parts = urllib.parse.urlsplit(stripped)
         stripped = parts.path or "/"
-    unquoted = urllib.parse.unquote(stripped)
-    if unquoted != stripped and scan_body_for_secrets(unquoted):
-        return redact_secrets_in_text(unquoted)
-    return redact_secrets_in_text(stripped)
+    stages = _unquote_iteratively(stripped)
+    if any(_has_direct_secret_match(stage) for stage in stages):
+        return _redact_direct_matches(stages[-1])
+    return stripped

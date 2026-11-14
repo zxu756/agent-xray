@@ -541,6 +541,7 @@ class ProxySecurityAndPrivacyTests(unittest.TestCase):
                     time.sleep(0.06)
             conn.sendall(
                 b'event: message_delta\ndata: {"type":"message_delta","usage":{"input_tokens":120,"output_tokens":20}}\n\n'
+                b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
             )
             conn.close()
 
@@ -723,7 +724,7 @@ class ProxySecurityAndPrivacyTests(unittest.TestCase):
         try:
             with start_background_proxy(
                 upstream=f"http://127.0.0.1:{up_port}",
-                strip_telemetry_headers=True,
+                strip_telemetry=True,
                 block_secrets=True,
             ) as px:
                 # 1. Duplicate headers + openai-organization/project + gzip request & gzip response
@@ -1026,6 +1027,299 @@ class ProxySecurityAndPrivacyTests(unittest.TestCase):
         finally:
             up_srv.shutdown()
             up_srv.server_close()
+
+    def test_xr4_no_duplicate_server_date_headers_and_no_forced_accept_encoding_identity(self) -> None:
+        import socket
+        from agent_xray.proxy import start_background_proxy
+
+        captured_wire_headers: list[list[tuple[str, str]]] = []
+
+        def raw_header_upstream(srv_sock: socket.socket) -> None:
+            try:
+                # Request 1: upstream returns explicit Server + Date
+                c1, _ = srv_sock.accept()
+            except OSError:
+                return
+            buf = b""
+            while b"\r\n\r\n" not in buf:
+                buf += c1.recv(4096)
+            head, rest = buf.split(b"\r\n\r\n", 1)
+            lines = head.decode("latin-1").split("\r\n")[1:]
+            hdrs = [(ln.split(":", 1)[0], ln.split(":", 1)[1].strip()) for ln in lines if ":" in ln]
+            captured_wire_headers.append(hdrs)
+            cl = next((int(v) for k, v in hdrs if k.lower() == "content-length"), 0)
+            while len(rest) < cl:
+                rest += c1.recv(4096)
+            body1 = b'{"id":"m1","usage":{"input_tokens":10,"output_tokens":2}}'
+            c1.sendall(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Server: UpstreamEdge/9.1\r\n"
+                b"Date: Sat, 14 Nov 2026 20:00:00 GMT\r\n"
+                b"Content-Type: application/json\r\n"
+                + f"Content-Length: {len(body1)}\r\n\r\n".encode("ascii")
+                + body1
+            )
+            c1.close()
+
+            try:
+                # Request 2: upstream omits both Server and Date
+                c2, _ = srv_sock.accept()
+            except OSError:
+                return
+            buf2 = b""
+            while b"\r\n\r\n" not in buf2:
+                buf2 += c2.recv(4096)
+            head2, rest2 = buf2.split(b"\r\n\r\n", 1)
+            lines2 = head2.decode("latin-1").split("\r\n")[1:]
+            hdrs2 = [(ln.split(":", 1)[0], ln.split(":", 1)[1].strip()) for ln in lines2 if ":" in ln]
+            captured_wire_headers.append(hdrs2)
+            cl2 = next((int(v) for k, v in hdrs2 if k.lower() == "content-length"), 0)
+            while len(rest2) < cl2:
+                rest2 += c2.recv(4096)
+            body2 = b'{"id":"m2","usage":{"input_tokens":12,"output_tokens":3}}'
+            c2.sendall(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                + f"Content-Length: {len(body2)}\r\n\r\n".encode("ascii")
+                + body2
+            )
+            c2.close()
+
+        srv_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv_sock.bind(("127.0.0.1", 0))
+        srv_sock.listen(4)
+        up_port = srv_sock.getsockname()[1]
+        threading.Thread(target=raw_header_upstream, args=(srv_sock,), daemon=True).start()
+
+        try:
+            with start_background_proxy(upstream=f"http://127.0.0.1:{up_port}") as px:
+                req_body = b'{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}'
+
+                # 1. Client omits Accept-Encoding -> upstream receives NO Accept-Encoding;
+                #    client receives exact single Server and single Date header!
+                hc1 = http.client.HTTPConnection("127.0.0.1", px.port, timeout=5)
+                hc1.putrequest("POST", "/anthropic/v1/messages", skip_accept_encoding=True)
+                hc1.putheader("Content-Type", "application/json")
+                hc1.putheader("Content-Length", str(len(req_body)))
+                hc1.endheaders(req_body)
+                r1 = hc1.getresponse()
+                _ = r1.read()
+                r1_hdrs = r1.getheaders()
+                hc1.close()
+
+                up1_names = [k.lower() for k, _ in captured_wire_headers[0]]
+                self.assertNotIn("accept-encoding", up1_names)
+
+                server_vals_1 = [v for k, v in r1_hdrs if k.lower() == "server"]
+                date_vals_1 = [v for k, v in r1_hdrs if k.lower() == "date"]
+                self.assertEqual(server_vals_1, ["UpstreamEdge/9.1"])
+                self.assertEqual(date_vals_1, ["Sat, 14 Nov 2026 20:00:00 GMT"])
+
+                # 2. Client sends explicit Accept-Encoding: gzip, br -> forwarded untouched;
+                #    upstream omits Date/Server -> proxy adds 1 Date and 0 Server headers!
+                hc2 = http.client.HTTPConnection("127.0.0.1", px.port, timeout=5)
+                hc2.putrequest("POST", "/anthropic/v1/messages", skip_accept_encoding=True)
+                hc2.putheader("Content-Type", "application/json")
+                hc2.putheader("Accept-Encoding", "gzip, br")
+                hc2.putheader("Content-Length", str(len(req_body)))
+                hc2.endheaders(req_body)
+                r2 = hc2.getresponse()
+                _ = r2.read()
+                r2_hdrs = r2.getheaders()
+                hc2.close()
+
+                up2_ae = [v for k, v in captured_wire_headers[1] if k.lower() == "accept-encoding"]
+                self.assertEqual(up2_ae, ["gzip, br"])
+                self.assertEqual([v for k, v in r2_hdrs if k.lower() == "server"], [])
+                self.assertEqual(len([v for k, v in r2_hdrs if k.lower() == "date"]), 1)
+        finally:
+            srv_sock.close()
+
+    def test_xr4_premature_upstream_disconnect_sets_stream_truncated_across_framing_modes(self) -> None:
+        import socket
+        from agent_xray.proxy import start_background_proxy
+
+        def truncation_upstream(srv_sock: socket.socket) -> None:
+            # 1. Complete SSE stream with message_stop -> stream_truncated = False
+            c1, _ = srv_sock.accept()
+            self._drain_http_head(c1)
+            c1.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n"
+                b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":50}}}\n\n'
+                b'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":12}}\n\n'
+                b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+            )
+            c1.close()
+
+            # 2. Chunked SSE dropping mid-stream without 0\r\n\r\n -> stream_truncated = True
+            c2, _ = srv_sock.accept()
+            self._drain_http_head(c2)
+            ev = b'data: {"type":"content_block_delta","delta":{"text":"partial"}}\n\n'
+            c2.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"
+                + f"{len(ev):x}\r\n".encode("ascii")
+                + ev
+                + b"\r\n"
+            )
+            c2.close()
+
+            # 3. Unframed SSE closing TCP without message_stop / [DONE] -> stream_truncated = True
+            c3, _ = srv_sock.accept()
+            self._drain_http_head(c3)
+            c3.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n"
+                b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":40}}}\n\n'
+                b'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"text":"cut"}}\n\n'
+            )
+            c3.close()
+
+            # 4. Non-SSE JSON with Content-Length: 400 closing after 32 bytes -> stream_truncated = True
+            c4, _ = srv_sock.accept()
+            self._drain_http_head(c4)
+            c4.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 400\r\n\r\n"
+                b'{"id":"msg_short","usage":{"inpu'
+            )
+            c4.close()
+
+        srv_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv_sock.bind(("127.0.0.1", 0))
+        srv_sock.listen(8)
+        up_port = srv_sock.getsockname()[1]
+        threading.Thread(target=truncation_upstream, args=(srv_sock,), daemon=True).start()
+
+        try:
+            with start_background_proxy(upstream=f"http://127.0.0.1:{up_port}") as px:
+                req_body = b'{"model":"claude-sonnet-4-6","stream":true,"messages":[{"role":"user","content":"go"}]}'
+                for _ in range(4):
+                    s = socket.create_connection(("127.0.0.1", px.port), timeout=5)
+                    s.sendall(
+                        f"POST /anthropic/v1/messages HTTP/1.1\r\nHost: 127.0.0.1:{px.port}\r\n"
+                        f"Content-Type: application/json\r\nContent-Length: {len(req_body)}\r\n\r\n".encode("utf-8")
+                        + req_body
+                    )
+                    while s.recv(4096):
+                        pass
+                    s.close()
+
+                turns = self._wait_for_turn_count(px, 4)
+                self.assertEqual([t["stream_truncated"] for t in turns], [False, True, True, True])
+                totals = px.get_totals()
+                self.assertEqual(totals["truncated_count"], 3)
+                self.assertEqual(totals["summary"]["truncated_count"], 3)
+        finally:
+            srv_sock.close()
+
+    def test_m1_row8_start_background_proxy_spec_signature_parity_loopback_only_and_clean_stop(self) -> None:
+        import inspect
+        import re
+        import socket
+        import agent_xray
+        from agent_xray.proxy import start_background_proxy
+
+        repo_root = Path(__file__).resolve().parents[1]
+        spec_text = (repo_root / "docs" / "SPEC.md").read_text(encoding="utf-8")
+
+        # Parse function name and parameter names directly from docs/SPEC.md §2.2
+        m_sig = re.search(r"`(start_background_proxy)\(\*,\s*([^)]+)\)\s*->\s*RunningXRayProxy`", spec_text)
+        self.assertIsNotNone(m_sig, "Could not parse start_background_proxy signature from docs/SPEC.md")
+        fn_name = m_sig.group(1)
+        spec_params = [
+            part.strip().split("=", 1)[0].split(":", 1)[0].strip()
+            for part in m_sig.group(2).split(",")
+            if part.strip()
+        ]
+        fn = getattr(agent_xray, fn_name)
+        self.assertIs(fn, start_background_proxy)
+        actual_params = list(inspect.signature(fn).parameters.keys())
+        self.assertEqual(actual_params, spec_params)
+        self.assertIn("strip_telemetry", actual_params)
+
+        # Enforce strict 127.0.0.1 binding on start_background_proxy
+        for forbidden_host in ("0.0.0.0", "localhost", "::1"):
+            with self.assertRaises(ValueError):
+                fn(host=forbidden_host, auth_token="tok")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = Path(tmp) / "row8.db"
+            baseline_threads = {t.ident for t in threading.enumerate()}
+
+            kwargs = {
+                "db_path": str(db_file),
+                "host": "127.0.0.1",
+                "port": 0,
+                "store": None,
+                "upstream": f"http://127.0.0.1:{self.up_port}",
+                "anthropic_upstream": f"http://127.0.0.1:{self.up_port}",
+                "openai_upstream": f"http://127.0.0.1:{self.up_port}",
+                "strip_telemetry": True,
+                "block_secrets": True,
+                "store_previews": False,
+                "auth_token": "row8-token-1234567890",
+            }
+            self.assertEqual(set(kwargs.keys()), set(spec_params))
+
+            px = fn(**kwargs)
+            bound_port = px.port
+            try:
+                self.assertEqual(px.host, "127.0.0.1")
+                self.assertEqual(px.server.server_address[0], "127.0.0.1")
+                self.assertEqual(px.db_path, str(db_file))
+
+                req_body = json.dumps(
+                    {
+                        "model": "claude-sonnet-4-6",
+                        "messages": [{"role": "user", "content": "Row 8 programmatic check"}],
+                    }
+                ).encode("utf-8")
+                hc = http.client.HTTPConnection("127.0.0.1", bound_port, timeout=5)
+                hc.request(
+                    "POST",
+                    "/anthropic/v1/messages",
+                    body=req_body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-stainless-os": "MacOS",
+                    },
+                )
+                hr = hc.getresponse()
+                _ = hr.read()
+                hc.close()
+                self.assertEqual(hr.status, 200)
+
+                turns = px.get_turns()
+                self.assertEqual(len(turns), 1)
+                self.assertEqual(turns[0]["input_tokens"], 200)
+                self.assertEqual(turns[0]["cached_input_tokens"], 800)
+                self.assertEqual(turns[0]["cache_creation_input_tokens"], 100)
+                self.assertEqual(turns[0]["output_tokens"], 50)
+                self.assertFalse(turns[0]["stream_truncated"])
+                self.assertNotIn("x-stainless-os", _FakeUpstream.requests[-1]["headers"])
+            finally:
+                px.stop()
+
+            # Verify SQLite persisted 1 turn accurately after stop()
+            conn = sqlite3.connect(db_file)
+            row_count = conn.execute("SELECT COUNT(*) FROM traces").fetchone()[0]
+            usage_raw = json.loads(conn.execute("SELECT usage_json FROM traces").fetchone()[0])
+            conn.close()
+            self.assertEqual(row_count, 1)
+            self.assertEqual(usage_raw["input_tokens"], 200)
+            self.assertEqual(usage_raw["output_tokens"], 50)
+
+            # Verify port is released immediately after stop()
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind(("127.0.0.1", bound_port))
+            finally:
+                probe.close()
+
+            # Verify 0 leftover background threads
+            after_threads = {t.ident for t in threading.enumerate()}
+            self.assertEqual(after_threads - baseline_threads, set())
 
 
 if __name__ == "__main__":

@@ -273,6 +273,117 @@ class StorePricingCacheAndLabelsTests(unittest.TestCase):
         self.assertIn("MCP 工具定义占比（估算）", html_zh)
         self.assertIn("估算输入 Token 总量", html_zh)
 
+    def test_xr4_sonnet_4_6_flat_pricing_vs_sonnet_4_5_200k_tier_and_stream_truncated_schema(self) -> None:
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+        from agent_xray.store import compute_turn_cost_usd, resolve_model_pricing
+
+        # 1. Sonnet 4.6 uses flat $3 / $0.30 / $3.75 / $15 even > 200k prompt tokens
+        for m46 in ("claude-sonnet-4-6", "claude-sonnet-4.6", "claude-sonnet-4-6-20260217"):
+            with self.subTest(model_flat=m46):
+                cost_46 = compute_turn_cost_usd(
+                    model=m46,
+                    status_code=200,
+                    blocked=False,
+                    input_tokens=150_000,
+                    cache_read_tokens=60_000,
+                    cache_write_tokens=10_000,
+                    output_tokens=1_000,
+                )
+                # (150k*3 + 60k*0.30 + 10k*3.75 + 1k*15) / 1e6 = (450 + 18 + 37.5 + 15) / 1000 = 0.5205
+                self.assertAlmostEqual(cost_46, 0.5205, places=6)
+
+        # 2. Sonnet 4 (4.0) and Sonnet 4.5 apply > 200k surcharge (2x input/cache, 1.5x output)
+        for m_tiered in (
+            "claude-sonnet-4",
+            "claude-sonnet-4-0",
+            "claude-sonnet-4.0",
+            "claude-sonnet-4-20250514",
+            "claude-sonnet-4-5",
+            "claude-sonnet-4.5",
+            "claude-sonnet-4-5-20250929",
+        ):
+            with self.subTest(model_tiered=m_tiered):
+                cost_tiered = compute_turn_cost_usd(
+                    model=m_tiered,
+                    status_code=200,
+                    blocked=False,
+                    input_tokens=150_000,
+                    cache_read_tokens=60_000,
+                    cache_write_tokens=10_000,
+                    output_tokens=1_000,
+                )
+                # (150k*6 + 60k*0.60 + 10k*7.50 + 1k*22.50) / 1e6 = 1.0335
+                self.assertAlmostEqual(cost_tiered, 1.0335, places=6)
+
+        # Unlisted future minor version does not silently inherit >200k surcharge
+        self.assertIsNone(resolve_model_pricing("claude-sonnet-4-7"))
+
+        # 3. Legacy 15-column SQLite migration -> adds stream_truncated INTEGER NOT NULL DEFAULT 0
+        with tempfile.TemporaryDirectory() as tmp:
+            db_file = Path(tmp) / "legacy15.db"
+            conn = sqlite3.connect(db_file)
+            conn.execute(
+                """
+                CREATE TABLE traces (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at REAL NOT NULL,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    status_code INTEGER NOT NULL,
+                    latency_ms INTEGER NOT NULL,
+                    ttft_ms REAL DEFAULT NULL,
+                    blocked INTEGER NOT NULL DEFAULT 0,
+                    buckets_json TEXT NOT NULL,
+                    namespaces_json TEXT NOT NULL,
+                    usage_json TEXT NOT NULL,
+                    headers_json TEXT NOT NULL,
+                    secrets_json TEXT NOT NULL,
+                    prompt_preview TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            conn.commit()
+            conn.close()
+
+            store = TraceStore(db_file)
+            store.record_turn(
+                provider="anthropic",
+                model="claude-sonnet-4-6",
+                path="/anthropic/v1/messages",
+                status_code=200,
+                latency_ms=100,
+                blocked=False,
+                buckets={"system_prompt": 10, "total_estimated": 10},
+                tool_namespaces=[],
+                usage={"input_tokens": 10, "output_tokens": 5, "cache_read_tokens": 0, "cache_write_tokens": 0},
+                header_audit=[],
+                secret_findings=[],
+                stream_truncated=False,
+            )
+            store.record_turn(
+                provider="anthropic",
+                model="claude-sonnet-4-6",
+                path="/anthropic/v1/messages",
+                status_code=200,
+                latency_ms=120,
+                blocked=False,
+                buckets={"system_prompt": 10, "total_estimated": 10},
+                tool_namespaces=[],
+                usage={"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0},
+                header_audit=[],
+                secret_findings=[],
+                stream_truncated=True,
+            )
+            summary = store.build_summary()
+            store.close()
+
+            self.assertFalse(summary["traces"][0]["stream_truncated"])
+            self.assertTrue(summary["traces"][1]["stream_truncated"])
+            self.assertEqual(summary["summary"]["truncated_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

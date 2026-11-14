@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -50,8 +51,63 @@ def _rate_entry(
 
 
 MODEL_PRICING_USD_PER_MTOK: list[tuple[str, dict[str, Any]]] = [
-    # Anthropic Claude Sonnet 4 family ($3 / $0.30 / $3.75 / $15 per MTok <= 200k prompt tokens;
+    # Anthropic Claude Sonnet 4.6: flat rate ($3 / $0.30 / $3.75 / $15 per MTok; no >200k surcharge)
+    ("claude-sonnet-4-6", _rate_entry(3.00, 0.30, 3.75, 15.00, _ANTHROPIC_PRICING_URL)),
+    ("claude-sonnet-4.6", _rate_entry(3.00, 0.30, 3.75, 15.00, _ANTHROPIC_PRICING_URL)),
+    # Anthropic Claude Sonnet 4 (4.0) & Sonnet 4.5 ($3 / $0.30 / $3.75 / $15 per MTok <= 200k prompt tokens;
     # > 200,000 prompt tokens: 2x input/cache rates [$6 / $0.60 / $7.50] and 1.5x output [$22.50])
+    (
+        "claude-sonnet-4-5",
+        _rate_entry(
+            3.00,
+            0.30,
+            3.75,
+            15.00,
+            _ANTHROPIC_PRICING_URL,
+            long_context_threshold_tokens=200_000,
+            long_context_input_multiplier=2.0,
+            long_context_output_multiplier=1.5,
+        ),
+    ),
+    (
+        "claude-sonnet-4.5",
+        _rate_entry(
+            3.00,
+            0.30,
+            3.75,
+            15.00,
+            _ANTHROPIC_PRICING_URL,
+            long_context_threshold_tokens=200_000,
+            long_context_input_multiplier=2.0,
+            long_context_output_multiplier=1.5,
+        ),
+    ),
+    (
+        "claude-sonnet-4-0",
+        _rate_entry(
+            3.00,
+            0.30,
+            3.75,
+            15.00,
+            _ANTHROPIC_PRICING_URL,
+            long_context_threshold_tokens=200_000,
+            long_context_input_multiplier=2.0,
+            long_context_output_multiplier=1.5,
+        ),
+    ),
+    (
+        "claude-sonnet-4.0",
+        _rate_entry(
+            3.00,
+            0.30,
+            3.75,
+            15.00,
+            _ANTHROPIC_PRICING_URL,
+            long_context_threshold_tokens=200_000,
+            long_context_input_multiplier=2.0,
+            long_context_output_multiplier=1.5,
+        ),
+    ),
     (
         "claude-sonnet-4",
         _rate_entry(
@@ -130,6 +186,10 @@ def resolve_model_pricing(model: str) -> dict[str, Any] | None:
     if "/" in norm:
         norm = norm.rsplit("/", 1)[-1]
     for prefix, rates in MODEL_PRICING_USD_PER_MTOK:
+        if prefix == "claude-sonnet-4":
+            if re.match(r"^claude-sonnet-4(?:$|[:]|-latest\b|-20\d{6})", norm):
+                return rates
+            continue
         if norm == prefix or norm.startswith(prefix + "-") or norm.startswith(prefix + ":"):
             return rates
         if prefix.endswith(("4", "4.1", "4o", "5", "o3", "o1")) and norm.startswith(prefix):
@@ -245,6 +305,7 @@ class TraceStore:
                     latency_ms INTEGER NOT NULL,
                     ttft_ms REAL DEFAULT NULL,
                     blocked INTEGER NOT NULL DEFAULT 0,
+                    stream_truncated INTEGER NOT NULL DEFAULT 0,
                     buckets_json TEXT NOT NULL,
                     namespaces_json TEXT NOT NULL,
                     usage_json TEXT NOT NULL,
@@ -260,6 +321,10 @@ class TraceStore:
             }
             if "ttft_ms" not in existing_cols:
                 self._conn.execute("ALTER TABLE traces ADD COLUMN ttft_ms REAL DEFAULT NULL")
+            if "stream_truncated" not in existing_cols:
+                self._conn.execute(
+                    "ALTER TABLE traces ADD COLUMN stream_truncated INTEGER NOT NULL DEFAULT 0"
+                )
             self._conn.commit()
 
     def _execute_write(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Cursor:
@@ -290,6 +355,7 @@ class TraceStore:
         prompt_preview: str = "",
         store_previews: bool = False,
         ttft_ms: float | None = None,
+        stream_truncated: bool = False,
         created_at: float | None = None,
     ) -> int:
         ts = created_at if created_at is not None else time.time()
@@ -334,9 +400,9 @@ class TraceStore:
                 """
                 INSERT INTO traces (
                     created_at, provider, model, path, status_code, latency_ms, ttft_ms,
-                    blocked, buckets_json, namespaces_json, usage_json,
+                    blocked, stream_truncated, buckets_json, namespaces_json, usage_json,
                     headers_json, secrets_json, prompt_preview
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     ts,
@@ -347,6 +413,7 @@ class TraceStore:
                     latency_ms,
                     safe_ttft,
                     1 if blocked else 0,
+                    1 if stream_truncated else 0,
                     buckets,
                     tool_namespaces,
                     usage,
@@ -417,6 +484,9 @@ class TraceStore:
                 if isinstance(raw_ttft, (int, float)) and not isinstance(raw_ttft, bool)
                 else None
             )
+            stream_truncated = (
+                bool(r["stream_truncated"]) if "stream_truncated" in r.keys() else False
+            )
 
             result.append(
                 {
@@ -431,6 +501,7 @@ class TraceStore:
                     "latency_ms": r["latency_ms"],
                     "ttft_ms": ttft_val,
                     "blocked": blocked,
+                    "stream_truncated": stream_truncated,
                     "has_bucket_breakdown": has_bucket_breakdown,
                     "is_estimated": has_bucket_breakdown,
                     "buckets_are_estimated": has_bucket_breakdown,
@@ -456,6 +527,7 @@ class TraceStore:
         totals: dict[str, Any] = {
             "turn_count": len(traces),
             "blocked_count": sum(1 for t in traces if t["blocked"]),
+            "truncated_count": sum(1 for t in traces if t.get("stream_truncated")),
             "is_estimated": True,
             "buckets_are_estimated": True,
             "bucket_unit": "estimated_tokens",

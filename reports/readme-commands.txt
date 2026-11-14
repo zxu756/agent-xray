@@ -4,10 +4,10 @@ Extracted bash blocks: README.md=6 blocks (15 commands), README.zh-CN.md=6 block
 
 --- Verifying README.md ---
 [EXEC PASS] README.md block#1.1: `agent-xray purge-db` -> exit=0 | [agent-xray] Purged SQLite trace database: <mktemp> (removed 1 file(s)).
-[SKIP] README.md block#2.1: `git clone https://github.com/zxu756/agent-xray.git` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; running working-tree CLI directly
-[SKIP] README.md block#2.2: `cd agent-xray` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; running working-tree CLI directly
-[SKIP] README.md block#2.3: `python3 -m venv .venv` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; running working-tree CLI directly
-[SKIP] README.md block#2.4: `.venv/bin/pip install -e .` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; running working-tree CLI directly
+[SKIP] README.md block#2.1: `git clone https://github.com/zxu756/agent-xray.git` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; NOT counted as passed
+[SKIP] README.md block#2.2: `cd agent-xray` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; NOT counted as passed
+[SKIP] README.md block#2.3: `python3 -m venv .venv` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; NOT counted as passed
+[SKIP] README.md block#2.4: `.venv/bin/pip install -e .` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; NOT counted as passed
 [EXEC PASS] README.md block#3.1: `agent-xray --version` -> exit=0 | agent-xray 0.2.0
 [EXEC PASS] README.md block#3.2: `agent-xray export-demo --out docs/demo-inspector.html` -> exit=0 | Wrote static demo inspector to <mktemp>
 [SUBSTITUTE] README.md block#4.1: replacing `<your-agent-command>` in `agent-xray run --strip-telemetry-headers --block-secrets -- <your-agent-command>` with local loopback mock_agent_normal.py & mock_agent_blocked.py (real external CLI not invoked)
@@ -24,10 +24,10 @@ Extracted bash blocks: README.md=6 blocks (15 commands), README.zh-CN.md=6 block
 
 --- Verifying README.zh-CN.md ---
 [EXEC PASS] README.zh-CN.md block#1.1: `agent-xray --lang zh purge-db` -> exit=0 | [agent-xray] 已清理 SQLite 追踪数据库：<mktemp> 1 个文件）。
-[SKIP] README.zh-CN.md block#2.1: `git clone https://github.com/zxu756/agent-xray.git` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; running working-tree CLI directly
-[SKIP] README.zh-CN.md block#2.2: `cd agent-xray` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; running working-tree CLI directly
-[SKIP] README.zh-CN.md block#2.3: `python3 -m venv .venv` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; running working-tree CLI directly
-[SKIP] README.zh-CN.md block#2.4: `.venv/bin/pip install -e .` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; running working-tree CLI directly
+[SKIP] README.zh-CN.md block#2.1: `git clone https://github.com/zxu756/agent-xray.git` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; NOT counted as passed
+[SKIP] README.zh-CN.md block#2.2: `cd agent-xray` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; NOT counted as passed
+[SKIP] README.zh-CN.md block#2.3: `python3 -m venv .venv` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; NOT counted as passed
+[SKIP] README.zh-CN.md block#2.4: `.venv/bin/pip install -e .` -> Reason: network clone / virtualenv pip install skipped in offline isolated check; NOT counted as passed
 [EXEC PASS] README.zh-CN.md block#3.1: `agent-xray --version` -> exit=0 | agent-xray 0.2.0
 [EXEC PASS] README.zh-CN.md block#3.2: `agent-xray --lang zh export-demo --out docs/demo-inspector.html` -> exit=0 | 已导出静态演示检查器至 <mktemp>
 [SUBSTITUTE] README.zh-CN.md block#4.1: replacing `<你的智能体命令>` in `agent-xray --lang zh run --strip-telemetry-headers --block-secrets -- <你的智能体命令>` with local loopback mock_agent_normal.py & mock_agent_blocked.py (real external CLI not invoked)
@@ -42,4 +42,4 @@ Extracted bash blocks: README.md=6 blocks (15 commands), README.zh-CN.md=6 block
 [EXEC PASS] README.zh-CN.md block#6.3: `agent-xray --lang zh report --db <mktemp>` -> exit=0 | [agent-xray] 会话摘要：共 3 轮 | 工具定义占用：没有数据 | MCP 工具定义占比：没有数据 | 缓存命中率：86%（4,300 / 5,000 tok）| 估算费用：$0.00624（未核对） | 去掉的遥测头：0 | 拦截密钥外泄：0
 [EXEC PASS] README.zh-CN.md block#6.4: `agent-xray --lang zh purge-db --db <mktemp>` -> exit=0 | [agent-xray] 已清理 SQLite 追踪数据库：<mktemp> 1 个文件）。
 
-=== ALL EXTRACTED README.md & README.zh-CN.md COMMANDS & DB ASSERTIONS PASSED ===
+=== README COMMANDS SUMMARY: executed_passed=22, skipped=8 (clone/venv/pip setup commands NOT counted as passed), failed=0 ===

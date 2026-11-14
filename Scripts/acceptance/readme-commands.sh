@@ -306,6 +306,9 @@ def assert_db_x15_normal_and_blocked(normal_db: pathlib.Path, blocked_db: pathli
 
 from agent_xray.store import TraceStore
 
+executed_passed = 0
+skipped_count = 0
+
 try:
     for doc_name, blocks in (("README.md", en_blocks), ("README.zh-CN.md", zh_blocks)):
         tag = "en" if doc_name == "README.md" else "zh"
@@ -347,9 +350,10 @@ try:
             for c_idx, cmd_str in enumerate(cmds, start=1):
                 # Block 2: git clone / cd / venv / pip install
                 if cmd_str.startswith(("git clone ", "cd ", "python3 -m venv ", ".venv/bin/pip install ")):
+                    skipped_count += 1
                     print(
                         f"[SKIP] {doc_name} block#{b_idx}.{c_idx}: `{cmd_str}` -> "
-                        "Reason: network clone / virtualenv pip install skipped in offline isolated check; running working-tree CLI directly"
+                        "Reason: network clone / virtualenv pip install skipped in offline isolated check; NOT counted as passed"
                     )
                     continue
 
@@ -393,6 +397,7 @@ try:
                     assert res_b.returncode == 0, (cmd_blk, res_b.stdout, res_b.stderr)
 
                     assert_db_x15_normal_and_blocked(db_norm, db_blk, f"{doc_name}#b{b_idx}.{c_idx}")
+                    executed_passed += 1
                     continue
 
                 # Long-running `serve` command: launch in background on free port, test normal + blocked turns, SIGINT, assert DB
@@ -455,6 +460,7 @@ try:
                     for forbidden in ("sk-ant-", "ServeQueryNormal", "ServeAuthKey", "ServeQueryBlocked", "ServeModelBlocked", "ServeBodyBlocked"):
                         assert forbidden not in dump_s, f"Leaked {forbidden!r} in serve DB dump"
                     print(f"[EXEC PASS] {doc_name} block#{b_idx}.{c_idx}: `{cmd_str}` -> exit=0, rows=2 (200 & 400), dump_secret_hits=0")
+                    executed_passed += 1
                     continue
 
                 # Direct synchronous CLI commands (`--version`, `export-demo`, `desktop`, `report`, `purge-db`)
@@ -487,9 +493,13 @@ try:
 
                 first_line = combined.splitlines()[0] if combined else "(ok)"
                 print(f"[EXEC PASS] {doc_name} block#{b_idx}.{c_idx}: `{cmd_str}` -> exit=0 | {first_line}")
+                executed_passed += 1
 finally:
     upstream_srv.shutdown()
     upstream_srv.server_close()
 
-print("\n=== ALL EXTRACTED README.md & README.zh-CN.md COMMANDS & DB ASSERTIONS PASSED ===")
+print(
+    f"\n=== README COMMANDS SUMMARY: executed_passed={executed_passed}, "
+    f"skipped={skipped_count} (clone/venv/pip setup commands NOT counted as passed), failed=0 ==="
+)
 PY

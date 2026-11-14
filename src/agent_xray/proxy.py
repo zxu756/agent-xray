@@ -108,7 +108,30 @@ class XRayHTTPServer(ThreadingHTTPServer):
         self.trace_store = store
         self._inflight_cond = threading.Condition()
         self._inflight_count = 0
+        self._threads_lock = threading.Lock()
+        self._handler_threads: list[threading.Thread] = []
         super().__init__((config.host, config.port), XRayRequestHandler)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        t = threading.Thread(
+            target=self.process_request_thread,
+            args=(request, client_address),
+            daemon=True,
+        )
+        with self._threads_lock:
+            self._handler_threads = [th for th in self._handler_threads if th.is_alive()]
+            self._handler_threads.append(t)
+        t.start()
+
+    def server_close(self) -> None:
+        super().server_close()
+        cur = threading.current_thread()
+        with self._threads_lock:
+            pending = list(self._handler_threads)
+            self._handler_threads.clear()
+        for th in pending:
+            if th is not cur and th.is_alive():
+                th.join(timeout=2.0)
 
     def begin_inflight(self) -> None:
         with self._inflight_cond:
@@ -155,6 +178,10 @@ class RunningXRayProxy:
         return int(self.server.server_address[1])
 
     @property
+    def db_path(self) -> str:
+        return self.store.db_path
+
+    @property
     def base_url(self) -> str:
         h = f"[{self.host}]" if ":" in self.host and not self.host.startswith("[") else self.host
         return f"http://{h}:{self.port}"
@@ -199,6 +226,7 @@ class RunningXRayProxy:
         return {
             "turn_count": s["turn_count"],
             "blocked_count": s["blocked_count"],
+            "truncated_count": s["truncated_count"],
             "input_tokens": s["total_actual_input"],
             "cached_input_tokens": s["total_cache_read"],
             "cache_creation_input_tokens": s["total_cache_write"],
@@ -243,19 +271,23 @@ class RunningXRayProxy:
 
 def start_background_proxy(
     *,
+    db_path: str | Path | None = ":memory:",
     host: str = "127.0.0.1",
     port: int = 0,
-    db_path: str | Path | None = ":memory:",
     store: TraceStore | None = None,
     upstream: str | None = None,
     anthropic_upstream: str | None = None,
     openai_upstream: str | None = None,
-    strip_telemetry_headers: bool = False,
+    strip_telemetry: bool = False,
     block_secrets: bool = False,
     store_previews: bool = False,
     auth_token: str = "",
 ) -> RunningXRayProxy:
-    """Starts an XRayHTTPServer on a background daemon thread and returns a RunningXRayProxy."""
+    """Starts an XRayHTTPServer bound strictly to 127.0.0.1 on a background thread."""
+    if host != "127.0.0.1":
+        raise ValueError(
+            f"start_background_proxy binds strictly to '127.0.0.1' (got {host!r})"
+        )
     owns_store = store is None
     active_store = store if store is not None else TraceStore(db_path if db_path is not None else ":memory:")
     ant_up = (
@@ -275,7 +307,7 @@ def start_background_proxy(
         port=port,
         anthropic_upstream=ant_up,
         openai_upstream=oai_up,
-        strip_telemetry_headers=strip_telemetry_headers,
+        strip_telemetry_headers=strip_telemetry,
         block_secrets=block_secrets,
         store_previews=store_previews,
         auth_token=auth_token,
@@ -742,6 +774,9 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
         status_code = 502
         is_sse = False
         headers_sent = False
+        stream_truncated = False
+        raw_bytes_read = 0
+        expected_content_length: int | None = None
         ttft_ms: float | None = None
         usage_parser: IncrementalResponseUsageParser | None = None
 
@@ -753,12 +788,11 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
 
-            has_accept_encoding = "accept-encoding" in outbound_headers
             conn.putrequest(
                 method,
                 target_path,
                 skip_host=True,
-                skip_accept_encoding=has_accept_encoding,
+                skip_accept_encoding=True,
             )
             conn.putheader("Host", parsed_up.netloc)
             for h_name, h_val in outbound_headers.pairs():
@@ -777,6 +811,14 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
             resp_ce = up_resp.getheader("Content-Encoding") or ""
             resp_te = (up_resp.getheader("Transfer-Encoding") or "").lower()
             is_sse = "text/event-stream" in resp_ct.lower()
+            raw_cl = up_resp.getheader("Content-Length")
+            if raw_cl is not None and "chunked" not in resp_te:
+                try:
+                    parsed_cl = int(raw_cl.strip())
+                    if parsed_cl >= 0:
+                        expected_content_length = parsed_cl
+                except ValueError:
+                    pass
 
             if classification is not None and status_code < 400 and method.upper() != "HEAD":
                 usage_parser = IncrementalResponseUsageParser(
@@ -785,11 +827,14 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
                 )
 
             self.close_connection = True
-            self.send_response(status_code)
+            self.send_response_only(status_code, up_resp.reason or None)
+            up_headers = up_resp.getheaders()
+            if not any(hk.lower() == "date" for hk, _ in up_headers):
+                self.send_header("Date", self.date_time_string())
             skip_resp_hdrs = {"transfer-encoding", "connection", "keep-alive"}
             if is_sse or "chunked" in resp_te:
                 skip_resp_hdrs.add("content-length")
-            for hk, hv in up_resp.getheaders():
+            for hk, hv in up_headers:
                 if hk.lower() in skip_resp_hdrs:
                     continue
                 self.send_header(hk, hv)
@@ -810,15 +855,23 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
                     )
                     if not chunk:
                         break
+                    raw_bytes_read += len(chunk)
                     if ttft_ms is None:
                         ttft_ms = round((time.monotonic() - t0) * 1000.0, 3)
                     if usage_parser is not None:
                         usage_parser.feed(chunk)
                     self.wfile.write(chunk)
                     self.wfile.flush()
+                if (
+                    expected_content_length is not None
+                    and raw_bytes_read < expected_content_length
+                ):
+                    stream_truncated = True
         except Exception as exc:
             self.close_connection = True
-            if not headers_sent:
+            if headers_sent:
+                stream_truncated = True
+            else:
                 err = json.dumps(
                     {"error": f"Upstream connection failed: {redact_secrets_in_text(str(exc))}"}
                 ).encode("utf-8")
@@ -836,11 +889,12 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
 
         latency_ms = int((time.monotonic() - t0) * 1000)
         if classification is not None:
-            usage = (
-                usage_parser.finish()
-                if usage_parser is not None
-                else {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}
-            )
+            if usage_parser is not None:
+                usage = usage_parser.finish()
+                if usage_parser.is_truncated:
+                    stream_truncated = True
+            else:
+                usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}
             store.record_turn(
                 provider=classification.provider,
                 model=classification.model,
@@ -849,6 +903,7 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
                 latency_ms=latency_ms,
                 ttft_ms=ttft_ms,
                 blocked=False,
+                stream_truncated=stream_truncated,
                 buckets=classification.buckets.to_dict(),
                 tool_namespaces=[ns.to_dict() for ns in classification.tool_namespaces],
                 usage=usage,

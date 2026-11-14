@@ -207,6 +207,15 @@ case "$MODE" in
       "$ACCEPT_SCRIPT"
       Scripts/acceptance/readme-commands.sh
     fi
+    if [[ "$MS" == "1" ]]; then
+      if [[ "${XRAY_REAL_API:-0}" == "1" ]]; then
+        echo "MILESTONE M1 SUMMARY: acceptance_rows_passed=8, acceptance_rows_skipped=0, readme_setup_skipped=8 (not counted as passed)"
+      else
+        echo "MILESTONE M1 SUMMARY: acceptance_rows_passed=7 (Rows 1,2,3,4,5,6,8), acceptance_rows_skipped=1 (Row 7 live paid API: 没跑), readme_setup_skipped=8 (not counted as passed)"
+      fi
+    else
+      echo "MILESTONE M0 SUMMARY: acceptance_rows_passed=7, acceptance_rows_skipped=0, readme_setup_skipped=8 (not counted as passed)"
+    fi
     ;;
 
   release)
@@ -214,8 +223,10 @@ case "$MODE" in
     Scripts/acceptance/m0-acceptance.sh
     Scripts/acceptance/m1-acceptance.sh
     Scripts/acceptance/readme-commands.sh
-    if [[ "${XRAY_REAL_API:-0}" != "1" ]]; then
-      echo "SKIPPED (没跑): XRAY_REAL_API!=1; requires user approval for paid API calibration"
+    if [[ "${XRAY_REAL_API:-0}" == "1" ]]; then
+      echo "RELEASE SUMMARY: m0_rows_passed=7, m1_rows_passed=8, m1_rows_skipped=0, readme_setup_skipped=8 (not counted as passed)"
+    else
+      echo "RELEASE SUMMARY: m0_rows_passed=7, m1_rows_passed=7, m1_rows_skipped=1 (Row 7 live paid API: 没跑), readme_setup_skipped=8 (not counted as passed)"
     fi
     ;;
 

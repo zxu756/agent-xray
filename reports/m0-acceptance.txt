@@ -1,6 +1,6 @@
 === agent-xray M0 Acceptance Suite ===
 Isolated temp dir: <mktemp>/xray-m0-accept (cleaned on exit)
-Fake loopback upstream listening on 127.0.0.1:54072
+Fake loopback upstream listening on 127.0.0.1:57379
 
 --- [Row 1 & Row 2] Secret & Custom Header Persistence Audit (sqlite3 .dump) ---
 Case noblock_default: HTTP=200 (expected 200)

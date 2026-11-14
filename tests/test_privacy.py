@@ -324,6 +324,115 @@ class PrivacyAndRedactionTests(unittest.TestCase):
         )
         self.assertEqual(res_legit_auth.findings, [])
 
+    def test_x18_iterative_unquote_case_insensitive_prefixes_8char_tail_and_doc_scope(self) -> None:
+        import urllib.parse
+        from agent_xray.privacy import normalize_trace_path, scan_request_for_secrets
+
+        raw_ant = "sk-ant-api03-AbCdEfGh1234"
+        single_enc = urllib.parse.quote(raw_ant, safe="")
+        # Explicitly encode '-' as %2D, then double- and triple-encode '%' -> '%25' -> '%2525'
+        single_dash_enc = raw_ant.replace("-", "%2D")
+        double_dash_enc = urllib.parse.quote(single_dash_enc, safe="")
+        triple_dash_enc = urllib.parse.quote(double_dash_enc, safe="")
+        self.assertIn("%252D", double_dash_enc)
+        self.assertIn("%25252D", triple_dash_enc)
+
+        # 1. Iterative URL percent-decoding in normalize_trace_path and scan_request_for_secrets
+        for depth_label, encoded_tok in [
+            ("single", single_enc),
+            ("single_dash", single_dash_enc),
+            ("double_dash", double_dash_enc),
+            ("triple_dash", triple_dash_enc),
+        ]:
+            with self.subTest(encoding_depth=depth_label):
+                path_in = f"/anthropic/{encoded_tok}/v1/messages?leak={encoded_tok}"
+                norm = normalize_trace_path(path_in)
+                self.assertEqual(norm, "/anthropic/[REDACTED]/v1/messages")
+                self.assertNotIn("AbCdEfGh1234", norm)
+                self.assertNotIn("api03", norm.lower())
+
+                scan_res = scan_request_for_secrets(
+                    raw_path=path_in,
+                    headers=[("X-Debug-Ref", f"https://example.test/{encoded_tok}")],
+                    raw_body=b'{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}',
+                )
+                fields = {f.field for f in scan_res.findings}
+                self.assertIn("url.path", fields)
+                self.assertIn("url.query.leak", fields)
+                self.assertIn("header.X-Debug-Ref", fields)
+
+        # Benign percent-encoded path without secrets stays intact
+        self.assertEqual(normalize_trace_path("/v1/files/my%20doc%2Fname?limit=10"), "/v1/files/my%20doc%2Fname")
+
+        # 2. Case-insensitive secret prefixes (uppercase & mixed-case)
+        case_variants = [
+            ("upper_ant", "SK-ANT-API03-AbCdEfGhIj123456", "AbCdEfGhIj123456"),
+            ("mixed_ant", "Sk-Ant-Api03-AbCdEfGhIj123456", "AbCdEfGhIj123456"),
+            ("upper_proj", "SK-PROJ-ZyXwVuTsRq987654", "ZyXwVuTsRq987654"),
+            ("mixed_svcacct", "Sk-SvcAcct-ZyXwVuTsRq987654", "ZyXwVuTsRq987654"),
+            ("upper_or", "SK-OR-V1-Ab12Cd34Ef56Gh78", "Ab12Cd34Ef56Gh78"),
+            ("upper_openai", "SK-mN3pQ4rS5tmN3pQ4rS5tUvWx", "mN3pQ4rS5t"),
+            ("upper_ghp", "GHP_kL9mN8pQ7rkL9mN8pQ7rkL9mN8", "kL9mN8pQ7r"),
+            ("upper_ghpat", "GITHUB_PAT_uV6wX5yZ4auV6wX5yZ4auV6wX5", "uV6wX5yZ4a"),
+            ("lower_akia", "akia12345678abcdefgh", "12345678abcdefgh"),
+            ("upper_xoxb", "XOXB-1234567890-0987654321-AbCdEf", "1234567890"),
+            ("upper_aiza", "AIZASYA1B2C3D4E5F6G7H8I9J0KLMNOPQRSTUVW", "SYA1B2C3D4"),
+            ("upper_jwt", "EYJhbGciOiJIUzI1NiJ9.EYJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV", "SflKxwRJSM"),
+            ("lower_pem", "-----begin rsa private key-----\nMIIEowIBAAKCAQEAv3ryLowerPem\n-----end rsa private key-----", "MIIEowIBAA"),
+        ]
+        for label, secret_tok, tail_probe in case_variants:
+            with self.subTest(case_variant=label):
+                self.assertGreaterEqual(len(scan_body_for_secrets(secret_tok)), 1, f"Missed {label}")
+                scrubbed = redact_secrets_in_text(secret_tok)
+                self.assertNotIn(tail_probe, scrubbed)
+                if "/" not in secret_tok and "\n" not in secret_tok:
+                    norm_u = normalize_trace_path(f"/anthropic/{secret_tok}/v1/messages")
+                    self.assertIn("[REDACTED]", norm_u)
+                    self.assertNotIn(tail_probe, norm_u)
+
+        # False-positive exclusions must remain 100% clean across cases
+        benign_case_variants = [
+            "AKIAIOSFODNN7EXAMPLE and akiaiosfodnn7example",
+            "AKIAXXXXXXXXXXXXXXXX and akiaxxxxxxxxxxxxxxxx",
+            "SK-ANT-XXXXXXXXXXXX and sk-ant-xxxxxxxx",
+            "SK-PROJ-XXXXXXXXXXXX and sk-proj-xxxxxxxx",
+            "SK-OR-V1-XXXXXXXXXXXX and sk-or-v1-xxxxxxxx",
+            "GHP_XXXXXXXXXXXXXXXXXXXXXXXX and ghp_xxxxxxxxxxxxxxxxxxxxxxxx",
+            "SK-SSH-ED25519@openssh.com and SK-ECDSA-SHA2-NISTP256",
+            "commit 3f786850e387550fdab836ed7e6dc881de23001b",
+            "uuid 123e4567-e89b-12d3-a456-426614174000",
+            "FLASK-SQLALCHEMY-EXTENSION-HELPER-PACKAGE",
+        ]
+        for benign_text in benign_case_variants:
+            with self.subTest(benign_case=benign_text):
+                self.assertEqual(scan_body_for_secrets(benign_text), [])
+
+        # 3. Guard {8,} tail threshold on sk-ant-, sk-proj-, sk-svcacct-, sk-or-v1- (8..12 char tails)
+        short_tail_keys = [
+            "sk-ant-A1b2C3d4",          # exact 8-char tail
+            "SK-ANT-A1b2C3d4E5",        # 10-char tail
+            "sk-proj-Z9y8X7w6",         # exact 8-char tail
+            "SK-SVCACCT-Q1w2E3r4T5y6",  # 12-char tail
+            "sk-or-v1-M1n2B3v4",        # exact 8-char tail
+            "SK-OR-V1-M1n2B3v4C5",      # 10-char tail
+        ]
+        for short_key in short_tail_keys:
+            with self.subTest(short_tail=short_key):
+                self.assertEqual(len(scan_body_for_secrets(short_key)), 1, f"{{8,}} threshold regression on {short_key}")
+                self.assertEqual(redact_secrets_in_text(short_key), "[REDACTED]")
+
+        # 4. Honest scope statement in README.md, README.zh-CN.md, and docs/SPEC.md
+        repo_root = Path(__file__).resolve().parents[1]
+        readme_en = (repo_root / "README.md").read_text(encoding="utf-8")
+        readme_zh = (repo_root / "README.zh-CN.md").read_text(encoding="utf-8")
+        spec_md = (repo_root / "docs" / "SPEC.md").read_text(encoding="utf-8")
+        self.assertIn("SECRET_PATTERNS", readme_en)
+        self.assertIn("arbitrary formatless", readme_en.lower())
+        self.assertIn("SECRET_PATTERNS", readme_zh)
+        self.assertTrue("无固定格式" in readme_zh or "任意格式" in readme_zh)
+        self.assertIn("SECRET_PATTERNS", spec_md)
+        self.assertIn("arbitrary formatless", spec_md.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
