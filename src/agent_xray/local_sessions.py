@@ -132,7 +132,7 @@ def import_local_desktop_sessions(
                     if reasoning_tok > 0:
                         usage_dict["reasoning_tokens"] = reasoning_tok
 
-                    sid = str(r["session_id"] or "session")
+                    sid = redact_secrets_in_text(str(r["session_id"] or "session"))
                     parsed_turns.append(
                         {
                             "session_id": f"opencode:{sid[:12]}",
@@ -219,10 +219,12 @@ def import_local_desktop_sessions(
                         )
                         slot = dedup_turns.get(dedup_key)
                         if slot is None:
+                            safe_stem = redact_secrets_in_text(jf.stem)
+                            safe_name = redact_secrets_in_text(jf.name)
                             dedup_turns[dedup_key] = {
-                                "session_id": f"claude:{jf.stem[:12]}",
+                                "session_id": f"claude:{safe_stem[:12]}",
                                 "model": str(msg.get("model") or "claude-unknown"),
-                                "path": f"local:{jf.name}",
+                                "path": f"local:{safe_name}",
                                 "in_tok": in_tok,
                                 "cache_r": cache_r,
                                 "cache_w": cache_w,

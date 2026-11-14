@@ -1,6 +1,6 @@
 === agent-xray M0 Acceptance Suite ===
 Isolated temp dir: <mktemp>/xray-m0-accept (cleaned on exit)
-Fake loopback upstream listening on 127.0.0.1:53296
+Fake loopback upstream listening on 127.0.0.1:64518
 
 --- [Row 1 & Row 2] Secret & Custom Header Persistence Audit (sqlite3 .dump) ---
 Case noblock_default: HTTP=200 (expected 200)
@@ -10,6 +10,10 @@ Case noblock_previews: HTTP=200 (expected 200)
 Case block_previews: HTTP=400 (expected 400)
   Verified block_previews: sqlite3 .dump has 0 secret/header values; X-Custom-Token value_length=37; preview_len=0
 
+--- [Supplemental X14] Full TEXT-Column Secret Injection Audit (block OFF & ON) ---
+  block_secrets=off: HTTP=200, text_columns=9 (provider,model,path,buckets_json,namespaces_json,usage_json,headers_json,secrets_json,prompt_preview), dump_secret_hits=0
+  block_secrets=on: HTTP=400, text_columns=9 (provider,model,path,buckets_json,namespaces_json,usage_json,headers_json,secrets_json,prompt_preview), dump_secret_hits=0
+
 --- [Row 3 & Row 4] Host Validation, Cross-Origin POST & Token Auth (EN & ZH) ---
 Lang=en: Host:attacker.example -> HTTP 403 | Cross-Origin POST -> HTTP 403 | Missing-Token POST -> HTTP 401 | Valid-Token POST -> HTTP 200
 Lang=en: serve --allow-lan (no --auth-token) -> exit=2 | msg=Error: --allow-lan requires an explicit --auth-token <token> to protect the Inspector UI and API.
@@ -17,21 +21,34 @@ Lang=zh: Host:attacker.example -> HTTP 403 | Cross-Origin POST -> HTTP 403 | Mis
 Lang=zh: serve --allow-lan (no --auth-token) -> exit=2 | msg=错误：启用 --allow-lan 监听局域网时必须显式提供 --auth-token <token> 以保护检查器界面与 API。
 
 --- [Row 5] Cache Hit Rate (87%) & Per-Model Pricing (Sonnet vs Opus vs Unknown vs 429, EN & ZH) ---
-  Model=claude-sonnet-4-5: hit_ratio=0.869565 (87%), exact_cost=$0.01425 (EN & ZH CLI + UI) OK
-  Model=claude-opus-4-1: hit_ratio=0.869565 (87%), exact_cost=$0.07125 (EN & ZH CLI + UI) OK
+  Model=claude-sonnet-4-5: hit_ratio=0.869565 (87%), exact_cost=$0.01425 (unverified / 未核对) OK
+  Model=claude-opus-4-1: hit_ratio=0.869565 (87%), exact_cost=$0.07125 (unverified / 未核对) OK
   Model=unknown-private-llm: hit_ratio=0.869565 (87%), cost=null ('Unknown price' / '未知价格') OK
 
---- [Row 6] Local Desktop Session Scan Audit (Numeric Metrics Only, EN & ZH) ---
-[agent-xray] Imported 24 recent Desktop/local turns (OpenCode Desktop & Claude Code; aggregate usage only, no 5-bucket breakdown).
+--- [Row 6 & X17] Isolated Desktop Scan (Empty HOME + Real OpenCode DDL Fixture, EN & ZH) ---
+[agent-xray] Imported 0 recent Desktop/local turns (OpenCode Desktop & Claude Code; aggregate usage only, no 5-bucket breakdown).
+[agent-xray] No API turns captured during session.
+[agent-xray] Imported 3 recent Desktop/local turns (OpenCode Desktop & Claude Code; aggregate usage only, no 5-bucket breakdown).
 
-[agent-xray] Session summary: 24 turns | Tool Definition Tokens: No data | MCP Tool Share: No data | Cache Hit Rate: 95% (4,264,007 / 4,482,524 tok) | Cost: Unknown price | Stripped Telemetry Headers: 0 | Blocked leaks: 0
-  Verified local desktop (en): imported_turns=24, all_buckets_zero=True, has_bucket_breakdown=False, max_turn_cache_hit_ratio=0.9948 (<=1.0), summary_cache_hit_ratio=0.9513, known_cost_usd=None, unknown_price_turns=24
-[agent-xray] 已导入 24 条近期本地桌面会话轮次（OpenCode Desktop 与 Claude Code，仅聚合 Token，不含原始请求五桶拆分）。
+[agent-xray] Session summary: 3 turns | Tool Definition Tokens: No data | MCP Tool Share: No data | Cache Hit Rate: 79% (6,300 / 8,000 tok) | Cost: $0.011865 (unverified) | Stripped Telemetry Headers: 0 | Blocked leaks: 0
+  Verified fixture desktop (en): imported_turns=3, all_buckets_zero=True, has_bucket_breakdown=False, summary_cache_hit_ratio=0.7875 (6300/8000 <= 1.0), cost_usd=0.011865
+[agent-xray] 已导入 3 条近期本地桌面会话轮次（OpenCode Desktop 与 Claude Code，仅聚合 Token，不含原始请求五桶拆分）。
 
-[agent-xray] 会话摘要：共 24 轮 | 工具定义占用：没有数据 | MCP 工具定义占比：没有数据 | 缓存命中率：95%（4,264,007 / 4,482,524 tok）| 估算费用：未知价格 | 去掉的遥测头：0 | 拦截密钥外泄：0
-  Verified local desktop (zh): imported_turns=24, all_buckets_zero=True, has_bucket_breakdown=False, max_turn_cache_hit_ratio=0.9948 (<=1.0), summary_cache_hit_ratio=0.9513, known_cost_usd=None, unknown_price_turns=24
+[agent-xray] 会话摘要：共 3 轮 | 工具定义占用：没有数据 | MCP 工具定义占比：没有数据 | 缓存命中率：79%（6,300 / 8,000 tok）| 估算费用：$0.011865（未核对） | 去掉的遥测头：0 | 拦截密钥外泄：0
+  Verified fixture desktop (zh): imported_turns=3, all_buckets_zero=True, has_bucket_breakdown=False, summary_cache_hit_ratio=0.7875 (6300/8000 <= 1.0), cost_usd=0.011865
 
---- [Row 7] Source Scan for Fixed-Ratio Bucket Multipliers ---
-rg '0\.12|0\.28|0\.34' src/ -> 0 matches (PASS)
+--- [Row 7, W4 & X16] Source Ratio Scan (excluding ui_html.py CSS) & Metadata Check ---
+grep -rnE '\b0\.(12|28|34)\b' src/ --exclude='ui_html.py' -> 0 matches; ui_html.py oklch 0.12 & 0.28 intact (PASS)
+grep -in 'streaming' pyproject.toml -> 0 matches (PASS)
 
-=== ALL 7 M0 ACCEPTANCE CHECKS PASSED (EN & ZH) ===
+--- [Supplemental W1] Automated Mutation Verification (7 M0 Acceptance Rows) ---
+  [KILLED] X14_sqlite_write_boundary_sanitizer -> tests.test_proxy.ProxySecurityAndPrivacyTests.test_all_sqlite_columns_sanitized_against_request_secrets failed with AssertionError (exit=1)
+  [KILLED] Row1_prompt_preview_truncate_before_redact -> tests.test_privacy.PrivacyAndRedactionTests.test_default_zero_preview_and_redact_before_truncate_and_blocked_metadata failed with AssertionError (exit=1)
+  [KILLED] Row2_header_display_value_persisted -> tests.test_privacy.PrivacyAndRedactionTests.test_headers_persist_only_name_and_value_length failed with AssertionError (exit=1)
+  [KILLED] Row3_dns_rebinding_host_guard_bypassed -> tests.test_proxy.ProxySecurityAndPrivacyTests.test_host_origin_and_token_guards_on_ui_and_api failed with AssertionError (exit=1)
+  [KILLED] Row4_mutation_post_token_guard_bypassed -> tests.test_proxy.ProxySecurityAndPrivacyTests.test_host_origin_and_token_guards_on_ui_and_api failed with AssertionError (exit=1)
+  [KILLED] Row5_cache_hit_denominator_missing_cache_write -> tests.test_store.StorePricingCacheAndLabelsTests.test_sonnet_vs_opus_pricing_cache_write_and_87pct_hit_rate failed with AssertionError (exit=1)
+  [KILLED] Row6_desktop_fabricated_bucket_flag -> tests.test_desktop.DesktopLocalSessionTests.test_opencode_per_turn_import_ignores_session_v2_cumulative_totals failed with AssertionError (exit=1)
+All 7 mutations killed by named tests and isolated copy cleanly restored (PASS)
+
+=== ALL M0 ACCEPTANCE & SUPPLEMENTAL CHECKS PASSED (EN & ZH) ===

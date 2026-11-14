@@ -9,8 +9,12 @@ from agent_xray.ui_html import render_inspector_html
 
 class StorePricingCacheAndLabelsTests(unittest.TestCase):
     def test_sonnet_vs_opus_pricing_cache_write_and_87pct_hit_rate(self) -> None:
-        self.assertEqual(PRICING_TABLE_DATE, "2026-11")
+        self.assertEqual(PRICING_TABLE_DATE, "unverified")
         self.assertGreaterEqual(len(MODEL_PRICING_USD_PER_MTOK), 8)
+        for prefix, meta in MODEL_PRICING_USD_PER_MTOK:
+            with self.subTest(model_prefix=prefix):
+                self.assertTrue(str(meta.get("source_url", "")).startswith("https://"))
+                self.assertEqual(meta.get("verified_at"), "unverified")
 
         store = TraceStore(":memory:")
         usage = {

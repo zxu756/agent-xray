@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import urllib.parse
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -39,21 +40,21 @@ SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "PEM Private Key",
         re.compile(
-            r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:.*?-----END [A-Z0-9 ]*PRIVATE KEY-----|[\r\n].*)",
+            r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:.*?-----END [A-Z0-9 ]*PRIVATE KEY-----|.+)",
             re.DOTALL,
         ),
     ),
     (
         "Anthropic API Key",
-        re.compile(r"sk-ant-(?![xX]{16,}(?![A-Za-z0-9_-]))[A-Za-z0-9_-]{12,}"),
+        re.compile(r"sk-ant-(?![xX]{8,}(?![A-Za-z0-9_-]))[A-Za-z0-9_-]{8,}"),
     ),
     (
         "OpenAI Project Key",
-        re.compile(r"sk-(?:proj|svcacct)-(?![xX]{16,}(?![A-Za-z0-9_-]))[A-Za-z0-9_-]{12,}"),
+        re.compile(r"sk-(?:proj|svcacct)-(?![xX]{8,}(?![A-Za-z0-9_-]))[A-Za-z0-9_-]{8,}"),
     ),
     (
         "OpenRouter API Key",
-        re.compile(r"sk-or-v1-(?![xX]{16,}(?![A-Za-z0-9_-]))[A-Za-z0-9_-]{12,}"),
+        re.compile(r"sk-or-v1-(?![xX]{8,}(?![A-Za-z0-9_-]))[A-Za-z0-9_-]{8,}"),
     ),
     (
         "OpenAI API Key",
@@ -96,7 +97,7 @@ class HeaderAuditEntry:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "name": self.name,
+            "name": redact_secrets_in_text(self.name),
             "value_length": self.value_length,
             "category": self.category,
             "action": self.action,
@@ -111,8 +112,8 @@ class SecretFinding:
 
     def to_dict(self) -> dict[str, str]:
         return {
-            "rule": self.rule,
-            "field": self.field,
+            "rule": redact_secrets_in_text(self.rule),
+            "field": redact_secrets_in_text(self.field),
         }
 
 
@@ -235,7 +236,15 @@ def scan_payload_for_secrets(payload: Any, *, raw_fallback: str = "") -> list[Se
                     findings.append(f)
         elif isinstance(node, dict):
             for k, v in node.items():
-                child_path = f"{path}.{k}" if path else str(k)
+                raw_k = str(k)
+                key_loc = f"{path}.<key>" if path else "<key>"
+                for fk in scan_body_for_secrets(raw_k, field=key_loc):
+                    key_tuple = (fk.rule, fk.field)
+                    if key_tuple not in seen:
+                        seen.add(key_tuple)
+                        findings.append(fk)
+                safe_k = redact_secrets_in_text(raw_k)
+                child_path = f"{path}.{safe_k}" if path else safe_k
                 _walk(v, child_path)
         elif isinstance(node, list):
             for idx, item in enumerate(node):
@@ -264,3 +273,17 @@ def redact_secrets_in_text(text: str) -> str:
         scrubbed = pattern.sub("[REDACTED]", scrubbed)
     scrubbed = _UNCLOSED_PEM_REDACT_RE.sub("[REDACTED]", scrubbed)
     return scrubbed
+
+
+def normalize_trace_path(raw_path: str) -> str:
+    """Strips URL query/fragment components and redacts any secret in the path."""
+    if not raw_path:
+        return ""
+    stripped = raw_path
+    if "?" in stripped or (stripped.startswith("/") and "#" in stripped):
+        parts = urllib.parse.urlsplit(stripped)
+        stripped = parts.path or "/"
+    unquoted = urllib.parse.unquote(stripped)
+    if unquoted != stripped and scan_body_for_secrets(unquoted):
+        return redact_secrets_in_text(unquoted)
+    return redact_secrets_in_text(stripped)

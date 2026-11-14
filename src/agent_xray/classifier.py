@@ -99,13 +99,13 @@ def extract_tool_namespace(tool_name: str) -> str:
         return "builtin"
     m_double = re.match(r"^mcp__([a-zA-Z0-9_-]+)__.+$", tool_name)
     if m_double:
-        return f"mcp:{m_double.group(1)}"
+        return f"mcp:{redact_secrets_in_text(m_double.group(1))}"
     m_dot = re.match(r"^mcp_([a-zA-Z0-9_-]+)[._].+$", tool_name)
     if m_dot:
-        return f"mcp:{m_dot.group(1)}"
+        return f"mcp:{redact_secrets_in_text(m_dot.group(1))}"
     if ":" in tool_name:
         prefix = tool_name.split(":", 1)[0]
-        return f"mcp:{prefix}"
+        return f"mcp:{redact_secrets_in_text(prefix)}"
     return "builtin"
 
 

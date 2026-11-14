@@ -114,13 +114,13 @@ def render_inspector_html(
     --b-sys: oklch(0.375 0.032 252);
     --b-rules: oklch(0.545 0.038 258);
     --b-mcp: oklch(0.555 0.195 30);
-    --b-results: oklch(0.515 0.100 188);
-    --b-conv: oklch(0.665 0.119 76);
+    --b-results: oklch(0.515 0.092 188);
+    --b-conv: oklch(0.665 0.122 76);
     --b-track: oklch(0.928 0.010 76);
 
-    --badge-ok-bg: oklch(0.515 0.100 188 / 0.118);
+    --badge-ok-bg: oklch(0.515 0.092 188 / 0.12);
     --badge-ok-ink: oklch(0.365 0.082 188);
-    --badge-warn-bg: oklch(0.665 0.119 76 / 0.16);
+    --badge-warn-bg: oklch(0.665 0.122 76 / 0.16);
     --badge-warn-ink: oklch(0.415 0.105 68);
     --badge-neutral-bg: oklch(0.205 0.012 65 / 0.06);
 
@@ -153,18 +153,18 @@ def render_inspector_html(
     --color-accent-ink: oklch(0.155 0.008 68);
     --color-accent-soft: oklch(0.665 0.175 32 / 0.15);
     --color-focus: oklch(0.685 0.175 32);
-    --color-selection: oklch(0.665 0.175 32 / 0.275);
+    --color-selection: oklch(0.665 0.175 32 / 0.28);
 
     --b-sys: oklch(0.615 0.045 250);
     --b-rules: oklch(0.735 0.048 258);
     --b-mcp: oklch(0.655 0.180 32);
     --b-results: oklch(0.685 0.100 185);
-    --b-conv: oklch(0.765 0.119 80);
+    --b-conv: oklch(0.765 0.125 80);
     --b-track: oklch(0.228 0.009 68);
 
     --badge-ok-bg: oklch(0.685 0.100 185 / 0.16);
-    --badge-ok-ink: oklch(0.795 0.100 185);
-    --badge-warn-bg: oklch(0.765 0.119 80 / 0.16);
+    --badge-ok-ink: oklch(0.795 0.095 185);
+    --badge-warn-bg: oklch(0.765 0.125 80 / 0.16);
     --badge-warn-ink: oklch(0.835 0.115 80);
     --badge-neutral-bg: oklch(0.938 0.008 78 / 0.08);
   }}
@@ -1137,16 +1137,19 @@ function render() {{
   const promptDenom = actualIn + cacheHits + cacheWrites;
   const cachePct = promptDenom > 0 ? Math.round((cacheHits / promptDenom) * 100) : 0;
 
-  const pricingDate = s.pricing_date || "2026-11";
+  const pricingDate = s.pricing_date || "unverified";
   const unknownTurns = Number(s.unknown_price_turn_count || 0);
   let costLabel = "";
   if (s.estimated_cost_usd === null || s.estimated_cost_usd === undefined) {{
     costLabel = t.unknownPrice;
   }} else {{
     const baseCost = formatUsdValue(s.estimated_cost_usd);
+    const dateSuffix = pricingDate === "unverified"
+      ? (currentLang === "zh" ? `${{baseCost}}（未核对）` : `${{baseCost}} (unverified)`)
+      : `${{baseCost}} (${{pricingDate}})`;
     costLabel = unknownTurns > 0
       ? (currentLang === "zh" ? `${{baseCost}}（+${{unknownTurns}} 轮未知价格）` : `${{baseCost}} (+${{unknownTurns}} unknown price)`)
-      : `${{baseCost}} (${{pricingDate}})`;
+      : dateSuffix;
   }}
 
   const kpi1ValStr = (totEst > 0 || allTraces.length === 0 || hasAnyBuckets) ? fmt(totEst) : t.noData;

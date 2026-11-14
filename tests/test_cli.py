@@ -324,6 +324,12 @@ class CliHonestyTests(unittest.TestCase):
             self.assertIn("87%", err_s)
             self.assertIn("$0.01425", err_s)
 
+    def test_pyproject_description_does_not_claim_streaming_proxy(self) -> None:
+        pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+        desc_lines = [line for line in pyproject.splitlines() if line.strip().startswith("description")]
+        self.assertEqual(len(desc_lines), 1)
+        self.assertNotIn("streaming", desc_lines[0].lower())
+
 
 if __name__ == "__main__":
     unittest.main()

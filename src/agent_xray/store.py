@@ -10,51 +10,97 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .privacy import redact_secrets_in_text
+from .privacy import normalize_trace_path, redact_secrets_in_text
 
-# Official list prices in USD per 1,000,000 tokens as of 2026-11.
+# Model list prices in USD per 1,000,000 tokens.
+# Because offline verification does not fetch live vendor pages, rates are marked "unverified"
+# ("未核对" in Chinese) alongside the canonical vendor pricing URLs.
 # Ordered from most specific prefix to more general family prefix.
-PRICING_TABLE_DATE = "2026-11"
+PRICING_TABLE_DATE = "unverified"
 
-MODEL_PRICING_USD_PER_MTOK: list[tuple[str, dict[str, float]]] = [
-    # Anthropic Claude Sonnet ($3 / $0.30 / $3.75 / $15 per MTok)
-    ("claude-sonnet-4", {"input": 3.00, "cache_read": 0.30, "cache_write": 3.75, "output": 15.00}),
-    ("claude-3-7-sonnet", {"input": 3.00, "cache_read": 0.30, "cache_write": 3.75, "output": 15.00}),
-    ("claude-3.7-sonnet", {"input": 3.00, "cache_read": 0.30, "cache_write": 3.75, "output": 15.00}),
-    ("claude-3-5-sonnet", {"input": 3.00, "cache_read": 0.30, "cache_write": 3.75, "output": 15.00}),
-    ("claude-3.5-sonnet", {"input": 3.00, "cache_read": 0.30, "cache_write": 3.75, "output": 15.00}),
+_ANTHROPIC_PRICING_URL = "https://docs.anthropic.com/en/docs/about-claude/pricing"
+_OPENAI_PRICING_URL = "https://openai.com/api/pricing/"
+
+
+def _rate_entry(
+    inp: float,
+    cache_read: float,
+    cache_write: float,
+    out: float,
+    source_url: str,
+    verified_at: str = "unverified",
+) -> dict[str, Any]:
+    return {
+        "input": inp,
+        "cache_read": cache_read,
+        "cache_write": cache_write,
+        "output": out,
+        "source_url": source_url,
+        "verified_at": verified_at,
+    }
+
+
+MODEL_PRICING_USD_PER_MTOK: list[tuple[str, dict[str, Any]]] = [
+    # Anthropic Claude Sonnet ($3 / $0.30 / $3.75 / $15 per MTok; >200k surcharge unmodeled in M0)
+    ("claude-sonnet-4", _rate_entry(3.00, 0.30, 3.75, 15.00, _ANTHROPIC_PRICING_URL)),
+    ("claude-3-7-sonnet", _rate_entry(3.00, 0.30, 3.75, 15.00, _ANTHROPIC_PRICING_URL)),
+    ("claude-3.7-sonnet", _rate_entry(3.00, 0.30, 3.75, 15.00, _ANTHROPIC_PRICING_URL)),
+    ("claude-3-5-sonnet", _rate_entry(3.00, 0.30, 3.75, 15.00, _ANTHROPIC_PRICING_URL)),
+    ("claude-3.5-sonnet", _rate_entry(3.00, 0.30, 3.75, 15.00, _ANTHROPIC_PRICING_URL)),
     # Anthropic Claude Opus 4.5 / 4.6 ($5 / $0.50 / $6.25 / $25 per MTok)
-    ("claude-opus-4-6", {"input": 5.00, "cache_read": 0.50, "cache_write": 6.25, "output": 25.00}),
-    ("claude-opus-4.6", {"input": 5.00, "cache_read": 0.50, "cache_write": 6.25, "output": 25.00}),
-    ("claude-opus-4-5", {"input": 5.00, "cache_read": 0.50, "cache_write": 6.25, "output": 25.00}),
-    ("claude-opus-4.5", {"input": 5.00, "cache_read": 0.50, "cache_write": 6.25, "output": 25.00}),
+    ("claude-opus-4-6", _rate_entry(5.00, 0.50, 6.25, 25.00, _ANTHROPIC_PRICING_URL)),
+    ("claude-opus-4.6", _rate_entry(5.00, 0.50, 6.25, 25.00, _ANTHROPIC_PRICING_URL)),
+    ("claude-opus-4-5", _rate_entry(5.00, 0.50, 6.25, 25.00, _ANTHROPIC_PRICING_URL)),
+    ("claude-opus-4.5", _rate_entry(5.00, 0.50, 6.25, 25.00, _ANTHROPIC_PRICING_URL)),
     # Anthropic Claude Opus 4 / 4.1 / 3 ($15 / $1.50 / $18.75 / $75 per MTok)
-    ("claude-opus-4", {"input": 15.00, "cache_read": 1.50, "cache_write": 18.75, "output": 75.00}),
-    ("claude-3-opus", {"input": 15.00, "cache_read": 1.50, "cache_write": 18.75, "output": 75.00}),
+    ("claude-opus-4", _rate_entry(15.00, 1.50, 18.75, 75.00, _ANTHROPIC_PRICING_URL)),
+    ("claude-3-opus", _rate_entry(15.00, 1.50, 18.75, 75.00, _ANTHROPIC_PRICING_URL)),
     # Anthropic Claude Haiku
-    ("claude-haiku-4-5", {"input": 1.00, "cache_read": 0.10, "cache_write": 1.25, "output": 5.00}),
-    ("claude-haiku-4.5", {"input": 1.00, "cache_read": 0.10, "cache_write": 1.25, "output": 5.00}),
-    ("claude-3-5-haiku", {"input": 0.80, "cache_read": 0.08, "cache_write": 1.00, "output": 4.00}),
-    ("claude-3.5-haiku", {"input": 0.80, "cache_read": 0.08, "cache_write": 1.00, "output": 4.00}),
-    ("claude-3-haiku", {"input": 0.25, "cache_read": 0.03, "cache_write": 0.30, "output": 1.25}),
+    ("claude-haiku-4-5", _rate_entry(1.00, 0.10, 1.25, 5.00, _ANTHROPIC_PRICING_URL)),
+    ("claude-haiku-4.5", _rate_entry(1.00, 0.10, 1.25, 5.00, _ANTHROPIC_PRICING_URL)),
+    ("claude-3-5-haiku", _rate_entry(0.80, 0.08, 1.00, 4.00, _ANTHROPIC_PRICING_URL)),
+    ("claude-3.5-haiku", _rate_entry(0.80, 0.08, 1.00, 4.00, _ANTHROPIC_PRICING_URL)),
+    ("claude-3-haiku", _rate_entry(0.25, 0.03, 0.30, 1.25, _ANTHROPIC_PRICING_URL)),
     # OpenAI GPT-4o / GPT-4.1 / GPT-5 / o-series / Codex
-    ("gpt-4o-mini", {"input": 0.15, "cache_read": 0.075, "cache_write": 0.15, "output": 0.60}),
-    ("gpt-4o", {"input": 2.50, "cache_read": 1.25, "cache_write": 2.50, "output": 10.00}),
-    ("gpt-4.1-nano", {"input": 0.10, "cache_read": 0.025, "cache_write": 0.10, "output": 0.40}),
-    ("gpt-4.1-mini", {"input": 0.40, "cache_read": 0.10, "cache_write": 0.40, "output": 1.60}),
-    ("gpt-4.1", {"input": 2.00, "cache_read": 0.50, "cache_write": 2.00, "output": 8.00}),
-    ("gpt-5-nano", {"input": 0.05, "cache_read": 0.005, "cache_write": 0.05, "output": 0.40}),
-    ("gpt-5-mini", {"input": 0.25, "cache_read": 0.025, "cache_write": 0.25, "output": 2.00}),
-    ("gpt-5", {"input": 1.25, "cache_read": 1.25 / 10, "cache_write": 1.25, "output": 10.00}),
-    ("codex-mini", {"input": 1.50, "cache_read": 0.375, "cache_write": 1.50, "output": 6.00}),
-    ("o4-mini", {"input": 1.10, "cache_read": 0.275, "cache_write": 1.10, "output": 4.40}),
-    ("o3-mini", {"input": 1.10, "cache_read": 0.55, "cache_write": 1.10, "output": 4.40}),
-    ("o3", {"input": 2.00, "cache_read": 0.50, "cache_write": 2.00, "output": 8.00}),
-    ("o1", {"input": 15.00, "cache_read": 7.50, "cache_write": 15.00, "output": 60.00}),
+    ("gpt-4o-mini", _rate_entry(0.15, 0.075, 0.15, 0.60, _OPENAI_PRICING_URL)),
+    ("gpt-4o", _rate_entry(2.50, 1.25, 2.50, 10.00, _OPENAI_PRICING_URL)),
+    ("gpt-4.1-nano", _rate_entry(0.10, 0.025, 0.10, 0.40, _OPENAI_PRICING_URL)),
+    ("gpt-4.1-mini", _rate_entry(0.40, 0.10, 0.40, 1.60, _OPENAI_PRICING_URL)),
+    ("gpt-4.1", _rate_entry(2.00, 0.50, 2.00, 8.00, _OPENAI_PRICING_URL)),
+    ("gpt-5-nano", _rate_entry(0.05, 0.005, 0.05, 0.40, _OPENAI_PRICING_URL)),
+    ("gpt-5-mini", _rate_entry(0.25, 0.025, 0.25, 2.00, _OPENAI_PRICING_URL)),
+    ("gpt-5", _rate_entry(1.25, 1.25 / 10, 1.25, 10.00, _OPENAI_PRICING_URL)),
+    ("codex-mini", _rate_entry(1.50, 0.375, 1.50, 6.00, _OPENAI_PRICING_URL)),
+    ("o4-mini", _rate_entry(1.10, 0.275, 1.10, 4.40, _OPENAI_PRICING_URL)),
+    ("o3-mini", _rate_entry(1.10, 0.55, 1.10, 4.40, _OPENAI_PRICING_URL)),
+    ("o3", _rate_entry(2.00, 0.50, 2.00, 8.00, _OPENAI_PRICING_URL)),
+    ("o1", _rate_entry(15.00, 7.50, 15.00, 60.00, _OPENAI_PRICING_URL)),
 ]
 
 
-def resolve_model_pricing(model: str) -> dict[str, float] | None:
+def _sanitize_nested(val: Any) -> Any:
+    """Recursively redacts secrets across strings, dict keys/values, and sequences."""
+    if isinstance(val, str):
+        return redact_secrets_in_text(val)
+    if isinstance(val, dict):
+        return {_sanitize_nested(str(k)): _sanitize_nested(v) for k, v in val.items()}
+    if isinstance(val, (list, tuple)):
+        return [_sanitize_nested(x) for x in val]
+    return val
+
+
+def _sanitize_db_value(val: Any) -> Any:
+    """Mandatory storage-boundary sanitizer applied to every SQLite write parameter."""
+    if isinstance(val, str):
+        return redact_secrets_in_text(val)
+    if isinstance(val, bytes):
+        return redact_secrets_in_text(val.decode("utf-8", errors="replace")).encode("utf-8")
+    if isinstance(val, (dict, list, tuple)):
+        return redact_secrets_in_text(json.dumps(_sanitize_nested(val), ensure_ascii=False))
+    return val
+
+
+def resolve_model_pricing(model: str) -> dict[str, Any] | None:
     """Returns per-MTok USD pricing dict for known models, or None if unrecognized."""
     if not model:
         return None
@@ -171,9 +217,13 @@ class TraceStore:
             )
             self._conn.commit()
 
+    def _execute_write(self, sql: str, params: tuple[Any, ...] = ()) -> sqlite3.Cursor:
+        sanitized_params = tuple(_sanitize_db_value(p) for p in params)
+        return self._conn.execute(sql, sanitized_params)
+
     def clear(self) -> None:
         with self._lock:
-            self._conn.execute("DELETE FROM traces")
+            self._execute_write("DELETE FROM traces")
             self._conn.commit()
             if self.db_path != ":memory:":
                 self._conn.execute("VACUUM")
@@ -197,6 +247,7 @@ class TraceStore:
         created_at: float | None = None,
     ) -> int:
         ts = created_at if created_at is not None else time.time()
+        safe_path = normalize_trace_path(path)
         safe_headers = [
             {
                 "name": str(h.get("name") or h.get("header") or ""),
@@ -225,7 +276,7 @@ class TraceStore:
             safe_preview = redact_secrets_in_text(prompt_preview).strip()[:140]
 
         with self._lock:
-            cur = self._conn.execute(
+            cur = self._execute_write(
                 """
                 INSERT INTO traces (
                     created_at, provider, model, path, status_code, latency_ms,
@@ -237,15 +288,15 @@ class TraceStore:
                     ts,
                     provider,
                     model,
-                    path,
+                    safe_path,
                     status_code,
                     latency_ms,
                     1 if blocked else 0,
-                    json.dumps(buckets),
-                    json.dumps(tool_namespaces),
-                    json.dumps(usage),
-                    json.dumps(safe_headers),
-                    json.dumps(safe_secrets),
+                    buckets,
+                    tool_namespaces,
+                    usage,
+                    safe_headers,
+                    safe_secrets,
                     safe_preview,
                 ),
             )

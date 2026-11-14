@@ -1,4 +1,4 @@
-"""Loopback HTTP/SSE streaming passthrough proxy for Anthropic & OpenAI coding agents."""
+"""Loopback HTTP/SSE passthrough proxy for Anthropic & OpenAI coding agents."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from typing import Any
 
 from .classifier import classify_request_payload, parse_usage_from_response
 from .local_sessions import import_local_desktop_sessions
-from .privacy import audit_and_prepare_headers, scan_payload_for_secrets
+from .privacy import audit_and_prepare_headers, normalize_trace_path, redact_secrets_in_text, scan_payload_for_secrets
 from .store import TraceStore
 from .ui_html import render_inspector_html
 
@@ -365,6 +365,7 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
         store: TraceStore = self.server.trace_store  # type: ignore[attr-defined]
 
         req_body = self._read_request_body()
+        stored_path = normalize_trace_path(self.path)
         is_turn = self._is_llm_turn_endpoint(method, self.path)
 
         outbound_headers, header_audit = audit_and_prepare_headers(
@@ -385,7 +386,7 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
 
         classification = (
             classify_request_payload(
-                self.path,
+                stored_path,
                 payload_dict,
                 store_previews=cfg.store_previews,
             )
@@ -401,13 +402,13 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
         if cfg.block_secrets and secret_findings:
             latency_ms = int((time.monotonic() - t0) * 1000)
             provider = classification.provider if classification is not None else (
-                "anthropic" if ("anthropic" in self.path.lower() or "messages" in self.path.lower()) else "openai"
+                "anthropic" if ("anthropic" in stored_path.lower() or "messages" in stored_path.lower()) else "openai"
             )
             model = classification.model if classification is not None else "unknown"
             store.record_turn(
                 provider=provider,
                 model=model,
-                path=self.path,
+                path=stored_path,
                 status_code=400,
                 latency_ms=latency_ms,
                 blocked=True,
@@ -432,7 +433,10 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
                     "type": "agent_xray_secret_egress_blocked",
                     "message": (
                         f"Blocked outbound request containing {len(secret_findings)} credential pattern(s): "
-                        + ", ".join(f"{s.rule} (in {s.field})" for s in secret_findings)
+                        + ", ".join(
+                            f"{redact_secrets_in_text(s.rule)} (in {redact_secrets_in_text(s.field)})"
+                            for s in secret_findings
+                        )
                     ),
                 },
             }
@@ -499,7 +503,7 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
             store.record_turn(
                 provider=classification.provider,
                 model=classification.model,
-                path=self.path,
+                path=stored_path,
                 status_code=status_code,
                 latency_ms=latency_ms,
                 blocked=False,

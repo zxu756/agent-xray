@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import tempfile
 import unittest
@@ -14,16 +15,26 @@ from agent_xray.ui_html import render_inspector_html
 class DesktopLocalSessionTests(unittest.TestCase):
     def test_no_fixed_ratios_in_source(self) -> None:
         src_dir = Path(__file__).resolve().parents[1] / "src"
+        ratio_re = re.compile(r"\b0\.(?:12|28|34|14|09)\b")
         for py_file in src_dir.rglob("*.py"):
+            if py_file.name == "ui_html.py":
+                continue
             content = py_file.read_text(encoding="utf-8")
-            for forbidden_ratio in ("0.12", "0.28", "0.34", "0.14", "0.09"):
-                self.assertNotIn(
-                    forbidden_ratio,
-                    content,
-                    f"Found forbidden fixed bucket ratio {forbidden_ratio} in {py_file}",
-                )
+            m = ratio_re.search(content)
+            self.assertIsNone(
+                m,
+                f"Found forbidden fixed bucket ratio {m.group(0) if m else ''} in {py_file}",
+            )
+
+        # W4: UI stylesheet must retain its genuine CSS oklch color values (0.12 / 0.28)
+        ui_css = (src_dir / "agent_xray" / "ui_html.py").read_text(encoding="utf-8")
+        self.assertIn("oklch(0.515 0.092 188 / 0.12)", ui_css)
+        self.assertIn("oklch(0.665 0.175 32 / 0.28)", ui_css)
 
     def test_opencode_per_turn_import_ignores_session_v2_cumulative_totals(self) -> None:
+        schema_path = Path(__file__).resolve().parent / "fixtures" / "opencode_schema.sql"
+        schema_sql = schema_path.read_text(encoding="utf-8")
+
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             oc_dir = home / ".local/share/opencode"
@@ -31,40 +42,29 @@ class DesktopLocalSessionTests(unittest.TestCase):
             oc_db = oc_dir / "opencode.db"
 
             conn = sqlite3.connect(oc_db)
+            conn.executescript(schema_sql)
+            conn.execute("PRAGMA foreign_keys = ON")
             conn.execute(
                 """
-                CREATE TABLE session_v2 (
-                    id TEXT PRIMARY KEY,
-                    title TEXT,
-                    model TEXT,
-                    tokens_input INTEGER,
-                    tokens_output INTEGER,
-                    tokens_cache_read INTEGER,
-                    tokens_cache_write INTEGER,
-                    time_updated INTEGER
-                )
+                INSERT INTO project (id, worktree, time_created, time_updated, sandboxes)
+                VALUES ('proj_1', '/workspace/demo', 1794603600000, 1794603600000, '[]')
                 """
             )
-            # Huge cumulative session row that previously caused $717 cost & 2091% cache hit rate!
+            # Huge cumulative session row in authentic 37-column session_v2 table
+            # that previously caused $717 cost & 2091% cache hit rate!
             conn.execute(
                 """
-                INSERT INTO session_v2 VALUES (
-                    'ses_cum_1', 'Secret title sk-ant-api03-12345678901234567890',
-                    '{"id":"deepseek-v4.1-flash","providerID":"opencode-go"}',
-                    99449290, 3104714, 2149521664, 0, 1794603750000
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE session_message (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT,
-                    type TEXT,
-                    seq INTEGER,
-                    time_created INTEGER,
-                    time_updated INTEGER,
-                    data TEXT
+                INSERT INTO session_v2 (
+                    id, project_id, slug, directory, title, version,
+                    cost, tokens_input, tokens_output, tokens_reasoning,
+                    tokens_cache_read, tokens_cache_write, model,
+                    time_created, time_updated
+                ) VALUES (
+                    'ses_cum_1', 'proj_1', 'demo-slug', '/workspace/demo',
+                    'Secret title sk-ant-api03-12345678901234567890', '2.3.0',
+                    717.42, 99449290, 3104714, 0,
+                    2149521664, 0, '{"id":"deepseek-v4.1-flash","providerID":"opencode-go"}',
+                    1794603650000, 1794603750000
                 )
                 """
             )
@@ -88,6 +88,9 @@ class DesktopLocalSessionTests(unittest.TestCase):
                     "cache": {"read": 4500, "write": 0},
                 },
             }
+            conn.execute(
+                "INSERT INTO session_message VALUES ('m0', 'ses_cum_1', 'user', 0, 1794603690000, 1794603690000, '{}')"
+            )
             conn.execute(
                 "INSERT INTO session_message VALUES ('m1', 'ses_cum_1', 'assistant', 1, 1794603700000, 1794603701500, ?)",
                 (json.dumps(turn1_data),),

@@ -22,7 +22,7 @@ def _format_summary_cost(summary: dict[str, object], lang: str) -> str:
     labels = HONEST_LABELS[lang]
     est_cost = summary.get("estimated_cost_usd")
     unknown_turns = int(summary.get("unknown_price_turn_count") or 0)
-    pricing_date = str(summary.get("pricing_date") or "2026-11")
+    pricing_date = str(summary.get("pricing_date") or "unverified")
     if est_cost is None:
         return labels["unknown_price"]
     base = format_usd(float(est_cost))
@@ -30,6 +30,8 @@ def _format_summary_cost(summary: dict[str, object], lang: str) -> str:
         if lang == "zh":
             return f"{base}（+{unknown_turns} 轮{labels['unknown_price']}）"
         return f"{base} (+{unknown_turns} {labels['unknown_price']})"
+    if pricing_date == "unverified":
+        return f"{base}（未核对）" if lang == "zh" else f"{base} (unverified)"
     return f"{base} ({pricing_date})"
 
 
