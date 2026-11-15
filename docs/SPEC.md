@@ -1,6 +1,6 @@
 # agent-xray - Engineering Specification
 
-> **Release status:** Tagged release `v0.2.0` (`main`) predates the M0/M1 security, streaming forwarding, header fidelity, block-level classification, pricing, and SQLite write-boundary sanitization changes documented below, which live on the unreleased post-`v0.2.0` revision.
+> **Release status:** Tagged release `v0.2.0` predates the M0/M1 security, streaming forwarding, header fidelity, block-level classification, pricing, and SQLite write-boundary sanitization changes documented below, which are included since `v0.3.0`.
 
 ## 1. Problem Statement & Scope
 AI coding agents (`Claude Code`, `Codex`, `OpenCode`) send structured multi-part JSON payloads on every turn, including system instructions, workspace rule files (`AGENTS.md`, `CLAUDE.md`), MCP tool JSON Schemas, and tool execution results.

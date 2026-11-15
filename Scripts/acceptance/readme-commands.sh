@@ -468,7 +468,7 @@ try:
                 assert res.returncode == 0, f"Command failed ({doc_name}): {cmd_str}\n{combined}"
 
                 if "--version" in tokens:
-                    assert "agent-xray 0.2.0" in combined, combined
+                    assert "agent-xray 0.3.0" in combined, combined
                 elif "export-demo" in tokens:
                     demo_file = doc_tmp / "demo-inspector.html"
                     html_txt = demo_file.read_text(encoding="utf-8")

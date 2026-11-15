@@ -153,7 +153,7 @@ class AgentXRayTests(unittest.TestCase):
         outbound, audit = audit_and_prepare_headers(inbound, strip_telemetry=True)
         self.assertNotIn("x-stainless-os", outbound)
         self.assertNotIn("x-stainless-arch", outbound)
-        self.assertEqual(outbound["User-Agent"], "agent-xray/0.2.0")
+        self.assertEqual(outbound["User-Agent"], "agent-xray/0.3.0")
         self.assertEqual(outbound["x-api-key"], fake_key)
 
         audit_dump = json.dumps([a.to_dict() for a in audit])
@@ -218,7 +218,7 @@ class AgentXRayTests(unittest.TestCase):
             self.assertIn(b"content_block_delta", sse_bytes)
             self.assertEqual(_MockUpstreamHandler.request_count, 1)
             self.assertNotIn("x-stainless-os", _MockUpstreamHandler.received_headers[0])
-            self.assertEqual(_MockUpstreamHandler.received_headers[0]["user-agent"], "agent-xray/0.2.0")
+            self.assertEqual(_MockUpstreamHandler.received_headers[0]["user-agent"], "agent-xray/0.3.0")
 
             # 2. Secret-leaking request must be blocked with 400 BEFORE hitting upstream
             leaked_tok = "ghp_" + ("9" * 30)
@@ -306,7 +306,7 @@ class AgentXRayTests(unittest.TestCase):
         self.assertNotIn("\u2013", html_zh)
 
     def test_version_and_bilingual_cli_lang_support(self) -> None:
-        self.assertEqual(__version__, "0.2.0")
+        self.assertEqual(__version__, "0.3.0")
 
         # Precedence: CLI flag > AGENT_XRAY_LANG > LC_ALL / LANG > en
         self.assertEqual(resolve_lang("zh", {"AGENT_XRAY_LANG": "en", "LC_ALL": "en_US.UTF-8"}), "zh")
