@@ -16,6 +16,10 @@ HONEST_LABELS: dict[str, dict[str, str]] = {
         "unknown_price": "Unknown price",
         "no_data": "No data",
         "estimated": "Estimated",
+        "truncated_badge": "[TRUNCATED]",
+        "truncated_streams": "Truncated Streams",
+        "truncated_incomplete_note": "usage & cost incomplete",
+        "truncated_turn_warning": "Upstream stream truncated before completion - token usage & cost incomplete",
     },
     "zh": {
         "tool_definition_tokens": "工具定义占用",
@@ -25,6 +29,10 @@ HONEST_LABELS: dict[str, dict[str, str]] = {
         "unknown_price": "未知价格",
         "no_data": "没有数据",
         "estimated": "估算",
+        "truncated_badge": "[流已截断]",
+        "truncated_streams": "截断流轮次",
+        "truncated_incomplete_note": "用量与费用不完整",
+        "truncated_turn_warning": "上游响应流中途截断，本轮用量与费用不完整",
     },
 }
 

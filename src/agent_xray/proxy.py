@@ -690,9 +690,10 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
             )
 
         payload_dict = scan_res.parsed_payload if isinstance(scan_res.parsed_payload, dict) else None
+        route_path = urllib.parse.urlsplit(self.path).path or self.path
         classification = (
             classify_request_payload(
-                stored_path,
+                route_path,
                 payload_dict,
                 store_previews=cfg.store_previews,
             )
@@ -705,7 +706,7 @@ class XRayRequestHandler(BaseHTTPRequestHandler):
             provider = (
                 classification.provider
                 if classification is not None
-                else self._infer_provider(stored_path, self.headers)
+                else self._infer_provider(route_path, self.headers)
             )
             model = (
                 classification.model

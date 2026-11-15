@@ -384,6 +384,31 @@ class StorePricingCacheAndLabelsTests(unittest.TestCase):
             self.assertTrue(summary["traces"][1]["stream_truncated"])
             self.assertEqual(summary["summary"]["truncated_count"], 1)
 
+    def test_xr7_readme_en_and_zh_explicitly_mark_claude_sonnet_4_6_pricing_unverified(self) -> None:
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[1]
+        readme_en = (repo_root / "README.md").read_text(encoding="utf-8")
+        readme_zh = (repo_root / "README.zh-CN.md").read_text(encoding="utf-8")
+        spec_md = (repo_root / "docs" / "SPEC.md").read_text(encoding="utf-8")
+
+        sonnet46_lines_en = [ln for ln in readme_en.splitlines() if "claude-sonnet-4-6" in ln]
+        sonnet46_lines_zh = [ln for ln in readme_zh.splitlines() if "claude-sonnet-4-6" in ln]
+        sonnet46_lines_spec = [ln for ln in spec_md.splitlines() if "claude-sonnet-4-6" in ln]
+
+        self.assertTrue(
+            any("pricing unverified" in ln.lower() for ln in sonnet46_lines_en),
+            f"README.md claude-sonnet-4-6 lines lack explicit 'pricing unverified': {sonnet46_lines_en}",
+        )
+        self.assertTrue(
+            any("价格未查证" in ln for ln in sonnet46_lines_zh),
+            f"README.zh-CN.md claude-sonnet-4-6 lines lack explicit '价格未查证': {sonnet46_lines_zh}",
+        )
+        self.assertTrue(
+            any("pricing unverified" in ln.lower() for ln in sonnet46_lines_spec),
+            f"docs/SPEC.md claude-sonnet-4-6 lines lack explicit 'pricing unverified': {sonnet46_lines_spec}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

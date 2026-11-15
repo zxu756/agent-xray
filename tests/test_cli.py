@@ -457,6 +457,121 @@ class CliHonestyTests(unittest.TestCase):
             gw2.shutdown()
             gw2.server_close()
 
+    def test_xr6_cli_report_flags_truncated_streams_and_incomplete_cost_bilingually(self) -> None:
+        import socket
+        import time
+        from agent_xray.proxy import start_background_proxy
+
+        def _drain_req(conn_sock: socket.socket) -> None:
+            buf = b""
+            while b"\r\n\r\n" not in buf:
+                ch = conn_sock.recv(1024)
+                if not ch:
+                    return
+                buf += ch
+            head, rest = buf.split(b"\r\n\r\n", 1)
+            cl = 0
+            for line in head.decode("iso-8859-1").split("\r\n")[1:]:
+                if line.lower().startswith("content-length:"):
+                    cl = int(line.split(":", 1)[1].strip())
+            rem = cl - len(rest)
+            while rem > 0:
+                ch = conn_sock.recv(min(4096, rem))
+                if not ch:
+                    break
+                rem -= len(ch)
+
+        def mixed_sse_upstream(srv_sock: socket.socket) -> None:
+            # Turn 1: complete SSE stream
+            c1, _ = srv_sock.accept()
+            _drain_req(c1)
+            c1.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n"
+                b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":200}}}\n\n'
+                b'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":30}}\n\n'
+                b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+            )
+            c1.close()
+
+            # Turn 2: chunked SSE cut off abruptly after first event without terminal event
+            c2, _ = srv_sock.accept()
+            _drain_req(c2)
+            ev = b'data: {"type":"message_start","message":{"usage":{"input_tokens":120}}}\n\n'
+            c2.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n"
+                + f"{len(ev):x}\r\n".encode("ascii")
+                + ev
+                + b"\r\n"
+            )
+            c2.close()
+
+        srv_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv_sock.bind(("127.0.0.1", 0))
+        srv_sock.listen(4)
+        up_port = srv_sock.getsockname()[1]
+        threading.Thread(target=mixed_sse_upstream, args=(srv_sock,), daemon=True).start()
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                db_trunc = Path(tmp) / "xr6_trunc.db"
+                with start_background_proxy(db_path=db_trunc, upstream=f"http://127.0.0.1:{up_port}") as px:
+                    body = b'{"model":"claude-sonnet-4-5","stream":true,"messages":[{"role":"user","content":"hi"}]}'
+                    for _ in range(2):
+                        s = socket.create_connection(("127.0.0.1", px.port), timeout=5)
+                        s.sendall(
+                            f"POST /anthropic/v1/messages HTTP/1.1\r\nHost: 127.0.0.1:{px.port}\r\n"
+                            f"Content-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n".encode("utf-8")
+                            + body
+                        )
+                        while s.recv(4096):
+                            pass
+                        s.close()
+                    deadline = time.monotonic() + 3.0
+                    while len(px.get_turns()) < 2 and time.monotonic() < deadline:
+                        time.sleep(0.02)
+
+                rc_en, _, err_en = self._run_cli(["--lang", "en", "report", "--db", str(db_trunc)])
+                self.assertEqual(rc_en, 0)
+                self.assertIn("Truncated Streams: 1", err_en)
+                self.assertIn("usage & cost incomplete", err_en)
+                self.assertIn("[TRUNCATED]", err_en)
+                self.assertIn("Turn #2", err_en)
+                self.assertNotIn("Turn #1", err_en)
+
+                rc_zh, _, err_zh = self._run_cli(["--lang", "zh", "report", "--db", str(db_trunc)])
+                self.assertEqual(rc_zh, 0)
+                self.assertIn("截断流轮次：1", err_zh)
+                self.assertIn("用量与费用不完整", err_zh)
+                self.assertIn("[流已截断]", err_zh)
+                self.assertIn("第 2 轮", err_zh)
+                self.assertNotIn("第 1 轮", err_zh)
+
+                # Healthy DB without truncated streams must not emit truncation warnings
+                db_clean = Path(tmp) / "xr6_clean.db"
+                clean_store = TraceStore(db_clean)
+                clean_store.record_turn(
+                    provider="anthropic",
+                    model="claude-sonnet-4-5",
+                    path="/v1/messages",
+                    status_code=200,
+                    latency_ms=10,
+                    blocked=False,
+                    stream_truncated=False,
+                    buckets={"system_prompt": 10, "workspace_rules": 0, "mcp_and_tools": 0, "tool_results": 0, "conversation": 10, "total_estimated": 20},
+                    tool_namespaces=[],
+                    usage={"input_tokens": 20, "output_tokens": 5, "cache_read_tokens": 0, "cache_write_tokens": 0},
+                    header_audit=[],
+                    secret_findings=[],
+                )
+                clean_store.close()
+                rc_c, _, err_c = self._run_cli(["--lang", "en", "report", "--db", str(db_clean)])
+                self.assertEqual(rc_c, 0)
+                self.assertNotIn("[TRUNCATED]", err_c)
+                self.assertNotIn("usage & cost incomplete", err_c)
+        finally:
+            srv_sock.close()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1239,6 +1239,99 @@ subprocess.run([xray_bin, "--lang", "zh", "export-demo", "--out", str(demo_zh)],
 assert "(Estimated)" in demo_en.read_text(encoding="utf-8")
 assert "（估算）" in demo_zh.read_text(encoding="utf-8")
 print("PART2-ESTIMATED [PASS]: JSON `is_estimated=true`, CLI `(Estimated)`/`（估算）`, and HTML `(Estimated)`/`（估算）` verified")
+
+# P2.XR5: 9-layer & 12-layer nested percent-encoding placeholder & --block-secrets HTTP 400 (with _MAX_UNQUOTE_ROUNDS == 8)
+from agent_xray.privacy import _MAX_UNQUOTE_ROUNDS, UNCONVERGED_PATH_PLACEHOLDER
+from agent_xray.ui_html import render_inspector_html
+
+assert _MAX_UNQUOTE_ROUNDS == 8, f"_MAX_UNQUOTE_ROUNDS must stay 8, got {_MAX_UNQUOTE_ROUNDS}"
+
+
+def _enc_layers(secret: str, depth: int, full_hex: bool = False) -> str:
+    cur = "".join(f"%{ord(ch):02X}" for ch in secret) if full_hex else secret.replace("-", "%2D")
+    for _ in range(depth - 1):
+        cur = urllib.parse.quote(cur, safe="")
+    return cur
+
+
+xr5_srv = ThreadingHTTPServer(("127.0.0.1", 0), make_gateway_handler("xr5"))
+threading.Thread(target=xr5_srv.serve_forever, daemon=True).start()
+try:
+    s_xr5_a = "sk-test-FAKE1234567890abcdef"
+    s_xr5_b = "sk-ant-FAKE00001234567890abcdef"
+    xr5_body = json.dumps({"model": "claude-sonnet-4-5", "messages": [{"role": "user", "content": "ok"}]}).encode("utf-8")
+    for blk_xr5 in (False, True):
+        db_xr5 = tmp_dir / f"p2_xr5_{'on' if blk_xr5 else 'off'}.db"
+        with start_background_proxy(
+            db_path=db_xr5,
+            upstream=f"http://127.0.0.1:{xr5_srv.server_address[1]}",
+            block_secrets=blk_xr5,
+            store_previews=True,
+        ) as px_xr5:
+            for d_xr5 in (9, 12):
+                for sec_val, fh in [(s_xr5_a, False), (s_xr5_b, True)]:
+                    enc_seg = _enc_layers(sec_val, d_xr5, full_hex=fh)
+                    req_xr5 = urllib.request.Request(
+                        f"{px_xr5.base_url}/anthropic/{enc_seg}/v1/messages",
+                        data=xr5_body,
+                        headers={"Content-Type": "application/json"},
+                        method="POST",
+                    )
+                    try:
+                        with urllib.request.urlopen(req_xr5, timeout=5) as r_xr5:
+                            assert not blk_xr5 and r_xr5.status == 200
+                    except urllib.error.HTTPError as he_xr5:
+                        assert blk_xr5 and he_xr5.code == 400
+        c_xr5 = sqlite3.connect(str(db_xr5))
+        paths_xr5 = [r[0] for r in c_xr5.execute("SELECT path FROM traces").fetchall()]
+        dump_xr5 = "\n".join(c_xr5.iterdump())
+        c_xr5.close()
+        assert paths_xr5 == [UNCONVERGED_PATH_PLACEHOLDER] * 4, paths_xr5
+        raw_xr5 = b"".join(
+            p.read_bytes() for p in [db_xr5, pathlib.Path(f"{db_xr5}-wal"), pathlib.Path(f"{db_xr5}-shm")] if p.exists()
+        )
+        for bad_tok in ("FAKE1234567890abcdef", "FAKE00001234567890abcdef", "%2525"):
+            assert bad_tok not in dump_xr5 and bad_tok.encode("utf-8") not in raw_xr5
+    print(
+        f"PART2-XR5 [PASS]: _MAX_UNQUOTE_ROUNDS=8 preserved; 9-layer & 12-layer encoded fake secrets stored as "
+        f"{UNCONVERGED_PATH_PLACEHOLDER} (0 bytes leaked in SQLite/WAL) and rejected with HTTP 400 under --block-secrets"
+    )
+finally:
+    xr5_srv.shutdown()
+    xr5_srv.server_close()
+
+# P2.XR6: Truncated stream explicitly surfaced in CLI `report` (EN/ZH) and Web UI HTML (EN/ZH)
+xr6_db = tmp_dir / "p2_xr6_trunc.db"
+xr6_store = TraceStore(xr6_db)
+xr6_store.record_turn(
+    provider="anthropic",
+    model="claude-sonnet-4-5",
+    path="/anthropic/v1/messages",
+    status_code=200,
+    latency_ms=95,
+    ttft_ms=11.2,
+    blocked=False,
+    stream_truncated=True,
+    buckets={"system_prompt": 100, "workspace_rules": 0, "mcp_and_tools": 0, "tool_results": 0, "conversation": 50, "total_estimated": 150},
+    tool_namespaces=[],
+    usage={"input_tokens": 120, "cache_read_tokens": 0, "cache_write_tokens": 0, "output_tokens": 0},
+    header_audit=[],
+    secret_findings=[],
+)
+xr6_data = xr6_store.build_summary(limit=10)
+xr6_store.close()
+
+r_xr6_en = subprocess.run([xray_bin, "--lang", "en", "report", "--db", str(xr6_db)], capture_output=True, text=True, check=True)
+r_xr6_zh = subprocess.run([xray_bin, "--lang", "zh", "report", "--db", str(xr6_db)], capture_output=True, text=True, check=True)
+out_xr6_en = (r_xr6_en.stdout or "") + (r_xr6_en.stderr or "")
+out_xr6_zh = (r_xr6_zh.stdout or "") + (r_xr6_zh.stderr or "")
+assert "[TRUNCATED]" in out_xr6_en and "usage & cost incomplete" in out_xr6_en and "Truncated Streams: 1" in out_xr6_en, out_xr6_en
+assert "[流已截断]" in out_xr6_zh and "用量与费用不完整" in out_xr6_zh and "截断流轮次：1" in out_xr6_zh, out_xr6_zh
+html_xr6_en = render_inspector_html(xr6_data, lang="en")
+html_xr6_zh = render_inspector_html(xr6_data, lang="zh")
+assert "[TRUNCATED]" in html_xr6_en and "usage &amp; cost incomplete" in html_xr6_en, "Missing EN HTML truncation warning"
+assert "[流已截断]" in html_xr6_zh and "用量与费用不完整" in html_xr6_zh, "Missing ZH HTML truncation warning"
+print("PART2-XR6 [PASS]: CLI `report` (EN/ZH) and Web UI HTML (EN/ZH) flag `[TRUNCATED]`/`[流已截断]` and `usage & cost incomplete`/`用量与费用不完整`")
 PY
 
 # P2.4: Non-UI Source Scan for Fixed Ratios (W4)
@@ -1252,66 +1345,20 @@ echo "PART2-W4 [PASS]: grep -rnE '\\b0\\.(12|28|34)\\b' src/ --exclude='ui_html.
 
 # ---------------------------------------------------------------------------
 # Row 7: Real Paid API Tokenizer Error Calibration (Gated by XRAY_REAL_API=1)
-#        + Always-on Offline Local Loopback Calibration Harness Verification
+#        + Offline Pipeline Wiring Self-Check (`离线管线自检`, NOT tokenizer error)
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- [Row 7] Live External API Tokenizer Calibration Check ---"
-"$PYTHON" - "${ROOT_DIR}" <<'PY'
-import importlib.util, json, pathlib, sys, threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from agent_xray.classifier import classify_request_payload
-
-root_dir = pathlib.Path(sys.argv[1])
-cal_path = root_dir / "Scripts" / "acceptance" / "calibrate_tokenizer.py"
-spec = importlib.util.spec_from_file_location("calibrate_tokenizer", cal_path)
-assert spec is not None and spec.loader is not None
-cal_mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(cal_mod)
-
-
-class _LocalCalibrationOracle(BaseHTTPRequestHandler):
-    def log_message(self, fmt: str, *args: object) -> None:
-        return
-
-    def do_POST(self) -> None:
-        raw = self.rfile.read(int(self.headers.get("Content-Length") or "0"))
-        payload = json.loads(raw.decode("utf-8"))
-        est = classify_request_payload(self.path, payload).buckets.total_estimated
-        actual = max(1, int(round(est * 1.08)))
-        if "messages" in self.path and "chat/completions" not in self.path:
-            resp = {"id": "msg_c", "usage": {"input_tokens": actual, "output_tokens": 1}}
-        else:
-            resp = {"id": "chat_c", "usage": {"prompt_tokens": actual, "completion_tokens": 1}}
-        out = json.dumps(resp).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(out)))
-        self.end_headers()
-        self.wfile.write(out)
-
-
-srv = ThreadingHTTPServer(("127.0.0.1", 0), _LocalCalibrationOracle)
-port = srv.server_address[1]
-threading.Thread(target=srv.serve_forever, daemon=True).start()
-try:
-    rep = cal_mod.run_tokenizer_calibration(
-        anthropic_base_url=f"http://127.0.0.1:{port}",
-        openai_base_url=f"http://127.0.0.1:{port}/v1",
-        anthropic_api_key="local-fake-ant-key",
-        openai_api_key="local-fake-oai-key",
-        sample_count=3,
-    )
-    assert rep["recorded_turns"] == 6, rep
-    assert rep["anthropic"]["max_error"] < 0.25 and rep["openai"]["max_error"] < 0.25, rep
-    print(
-        f"ROW 7 [OFFLINE CALIBRATION HARNESS CHECK]: ok "
-        f"(recorded_turns={rep['recorded_turns']}, ant_max_err={rep['anthropic']['max_error']*100:.2f}%, "
-        f"oai_max_err={rep['openai']['max_error']*100:.2f}%)"
-    )
-finally:
-    srv.shutdown()
-    srv.server_close()
-PY
+ROW7_SELF_OUT="$("$PYTHON" "${ROOT_DIR}/Scripts/acceptance/calibrate_tokenizer.py" --offline-self-check)"
+echo "$ROW7_SELF_OUT"
+if [[ "$ROW7_SELF_OUT" != *"离线管线自检"* || "$ROW7_SELF_OUT" != *"offline_pipeline_self_check"* ]]; then
+  echo "FAIL: Row 7 offline self-check missing explicit offline_pipeline_self_check label!" >&2
+  exit 1
+fi
+if [[ "$ROW7_SELF_OUT" == *"max_err"* || "$ROW7_SELF_OUT" == *"mean_error"* || "$ROW7_SELF_OUT" == *"median_error"* ]]; then
+  echo "FAIL: Row 7 offline self-check must NOT report synthetic ratios as tokenizer error!" >&2
+  exit 1
+fi
 
 M1_ROW7_SKIPPED=0
 if [[ "${XRAY_REAL_API:-0}" == "1" ]]; then
@@ -1484,10 +1531,266 @@ try:
             child_pids.append(int(parts[0]))
     assert child_pids == [], f"Unexpected child subprocesses: {child_pids}"
 
+    # Side-by-side behavioral parity: CLI `agent-xray serve` vs programmatic `start_background_proxy`
+    import signal
+    import time
+
+    par_upstream_hits: list[tuple[str, dict[str, str], bytes]] = []
+    par_lock = threading.Lock()
+
+    def _row8_parity_upstream(srv_sock: socket.socket) -> None:
+        while True:
+            try:
+                cs, _ = srv_sock.accept()
+            except OSError:
+                break
+            try:
+                buf = b""
+                while b"\r\n\r\n" not in buf:
+                    ch = cs.recv(1024)
+                    if not ch:
+                        break
+                    buf += ch
+                if b"\r\n\r\n" not in buf:
+                    cs.close()
+                    continue
+                head_b, rest_b = buf.split(b"\r\n\r\n", 1)
+                lines = head_b.decode("iso-8859-1").split("\r\n")
+                req_p = lines[0].split(" ")[1]
+                hmap: dict[str, str] = {}
+                cl_len = 0
+                for ln in lines[1:]:
+                    if ":" in ln:
+                        hk, hv = ln.split(":", 1)
+                        hmap[hk.strip().lower()] = hv.strip()
+                        if hk.strip().lower() == "content-length":
+                            cl_len = int(hv.strip())
+                while len(rest_b) < cl_len:
+                    ch = cs.recv(min(4096, cl_len - len(rest_b)))
+                    if not ch:
+                        break
+                    rest_b += ch
+                for drop_h in ("host", "content-length", "accept-encoding", "connection"):
+                    hmap.pop(drop_h, None)
+                with par_lock:
+                    par_upstream_hits.append((req_p, hmap, rest_b))
+                pl = json.loads(rest_b.decode("utf-8"))
+                tag = str(pl.get("user") or "")
+                if tag == "sse_ok":
+                    cs.sendall(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n"
+                        b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":80,"cache_read_input_tokens":20}}}\n\n'
+                        b'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":15}}\n\n'
+                        b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+                    )
+                elif tag == "sse_trunc":
+                    cs.sendall(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n"
+                        b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":60}}}\n\n'
+                    )
+                else:
+                    body_out = json.dumps(
+                        {"id": "msg_r8_par", "usage": {"input_tokens": 110, "cache_read_input_tokens": 40, "output_tokens": 22}}
+                    ).encode("utf-8")
+                    cs.sendall(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                        + f"Content-Length: {len(body_out)}\r\n\r\n".encode("ascii")
+                        + body_out
+                    )
+            finally:
+                cs.close()
+
+    par_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    par_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    par_sock.bind(("127.0.0.1", 0))
+    par_sock.listen(16)
+    par_up_port = par_sock.getsockname()[1]
+    threading.Thread(target=_row8_parity_upstream, args=(par_sock,), daemon=True).start()
+
+    def _send_r8_suite(p_port: int) -> list[int]:
+        fk = "sk-ant-FAKE00001234567890abcdef"
+        suite = [
+            ("/anthropic/v1/messages", {"model": "claude-sonnet-4-5", "user": "json_ok", "messages": [{"role": "user", "content": "hi"}]}, {"Content-Type": "application/json", "x-api-key": fk, "x-stainless-os": "Darwin"}),
+            ("/anthropic/v1/messages", {"model": "claude-sonnet-4-5", "stream": True, "user": "sse_ok", "messages": [{"role": "user", "content": "sse"}]}, {"Content-Type": "application/json", "x-api-key": fk}),
+            ("/anthropic/v1/messages", {"model": "claude-sonnet-4-5", "stream": True, "user": "sse_trunc", "messages": [{"role": "user", "content": "cut"}]}, {"Content-Type": "application/json", "x-api-key": fk}),
+            ("/anthropic/v1/messages", {"model": "claude-sonnet-4-5", "user": "blocked_secret", "messages": [{"role": "user", "content": f"leak {fk}"}]}, {"Content-Type": "application/json"}),
+        ]
+        codes: list[int] = []
+        for spath, sobj, shdrs in suite:
+            hc_s = http.client.HTTPConnection("127.0.0.1", p_port, timeout=5)
+            hc_s.request("POST", spath, body=json.dumps(sobj).encode("utf-8"), headers=shdrs)
+            rs_s = hc_s.getresponse()
+            _ = rs_s.read()
+            codes.append(rs_s.status)
+            hc_s.close()
+        return codes
+
+    def _norm_rows(db_file_p: pathlib.Path) -> list[tuple[object, ...]]:
+        c_n = sqlite3.connect(str(db_file_p))
+        r_n = c_n.execute(
+            "SELECT provider, model, path, status_code, blocked, stream_truncated, "
+            "buckets_json, namespaces_json, usage_json, headers_json, secrets_json, prompt_preview "
+            "FROM traces ORDER BY id"
+        ).fetchall()
+        c_n.close()
+        return r_n
+
+    try:
+        cli_par_db = tmp_dir / "row8_cli_serve.db"
+        prog_par_db = tmp_dir / "row8_prog_api.db"
+        ep = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        ep.bind(("127.0.0.1", 0))
+        cli_par_port = ep.getsockname()[1]
+        ep.close()
+
+        env_par = os.environ.copy()
+        env_par["PYTHONPATH"] = str(root_dir / "src")
+        cli_srv_proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "agent_xray.cli",
+                "--lang",
+                "en",
+                "serve",
+                "--port",
+                str(cli_par_port),
+                "--db",
+                str(cli_par_db),
+                "--upstream",
+                f"http://127.0.0.1:{par_up_port}",
+                "--strip-telemetry-headers",
+                "--block-secrets",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env_par,
+        )
+        try:
+            cli_up_ready = False
+            for _ in range(100):
+                try:
+                    pr_s = socket.create_connection(("127.0.0.1", cli_par_port), timeout=0.2)
+                    pr_s.close()
+                    cli_up_ready = True
+                    break
+                except OSError:
+                    time.sleep(0.03)
+            assert cli_up_ready, "CLI serve did not bind in time"
+            cli_codes = _send_r8_suite(cli_par_port)
+            with par_lock:
+                cli_up_captured = list(par_upstream_hits)
+                par_upstream_hits.clear()
+        finally:
+            cli_srv_proc.send_signal(signal.SIGINT)
+            cli_srv_proc.communicate(timeout=5)
+
+        with fn(
+            db_path=str(prog_par_db),
+            upstream=f"http://127.0.0.1:{par_up_port}",
+            strip_telemetry=True,
+            block_secrets=True,
+        ) as px_par:
+            prog_codes = _send_r8_suite(px_par.port)
+            for _ in range(50):
+                if len(px_par.get_turns(limit=10)) >= 4:
+                    break
+                time.sleep(0.02)
+            with par_lock:
+                prog_up_captured = list(par_upstream_hits)
+                par_upstream_hits.clear()
+
+        assert cli_codes == [200, 200, 200, 400], cli_codes
+        assert prog_codes == cli_codes, (prog_codes, cli_codes)
+        assert cli_up_captured == prog_up_captured, (cli_up_captured, prog_up_captured)
+        assert _norm_rows(cli_par_db) == _norm_rows(prog_par_db), (_norm_rows(cli_par_db), _norm_rows(prog_par_db))
+
+        # Also compare secret-redacted HTTP 200 mode (`--store-previews`, no `--block-secrets`)
+        cli_red_db = tmp_dir / "row8_cli_redact.db"
+        prog_red_db = tmp_dir / "row8_prog_redact.db"
+        ep2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        ep2.bind(("127.0.0.1", 0))
+        cli_red_port = ep2.getsockname()[1]
+        ep2.close()
+        fk2 = "sk-ant-FAKE00001234567890abcdef"
+        red_payload = json.dumps({"model": "claude-sonnet-4-5", "user": "redact_200", "messages": [{"role": "user", "content": f"sec {fk2}"}]}).encode("utf-8")
+        red_url_path = f"/anthropic/{fk2}/v1/messages"
+
+        cli_red_proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "agent_xray.cli",
+                "--lang",
+                "en",
+                "serve",
+                "--port",
+                str(cli_red_port),
+                "--db",
+                str(cli_red_db),
+                "--upstream",
+                f"http://127.0.0.1:{par_up_port}",
+                "--strip-telemetry-headers",
+                "--store-previews",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env_par,
+        )
+        try:
+            for _ in range(100):
+                try:
+                    pr2 = socket.create_connection(("127.0.0.1", cli_red_port), timeout=0.2)
+                    pr2.close()
+                    break
+                except OSError:
+                    time.sleep(0.03)
+            hc_rc = http.client.HTTPConnection("127.0.0.1", cli_red_port, timeout=5)
+            hc_rc.request("POST", red_url_path, body=red_payload, headers={"Content-Type": "application/json", "x-stainless-os": "Darwin"})
+            resp_rc = hc_rc.getresponse()
+            _ = resp_rc.read()
+            hc_rc.close()
+            assert resp_rc.status == 200
+            with par_lock:
+                cli_red_up = list(par_upstream_hits)
+                par_upstream_hits.clear()
+        finally:
+            cli_red_proc.send_signal(signal.SIGINT)
+            cli_red_proc.communicate(timeout=5)
+
+        with fn(
+            db_path=str(prog_red_db),
+            upstream=f"http://127.0.0.1:{par_up_port}",
+            strip_telemetry=True,
+            block_secrets=False,
+            store_previews=True,
+        ) as px_red:
+            hc_rp = http.client.HTTPConnection("127.0.0.1", px_red.port, timeout=5)
+            hc_rp.request("POST", red_url_path, body=red_payload, headers={"Content-Type": "application/json", "x-stainless-os": "Darwin"})
+            resp_rp = hc_rp.getresponse()
+            _ = resp_rp.read()
+            hc_rp.close()
+            assert resp_rp.status == 200
+            for _ in range(50):
+                if len(px_red.get_turns(limit=5)) >= 1:
+                    break
+                time.sleep(0.02)
+            with par_lock:
+                prog_red_up = list(par_upstream_hits)
+                par_upstream_hits.clear()
+
+        assert cli_red_up == prog_red_up, (cli_red_up, prog_red_up)
+        assert _norm_rows(cli_red_db) == _norm_rows(prog_red_db), (_norm_rows(cli_red_db), _norm_rows(prog_red_db))
+    finally:
+        par_sock.close()
+
     print(
         f"ROW 8 [PASS]: start_background_proxy({len(spec_params)} SPEC kwargs) -> TypeError=0, "
         f"bind=127.0.0.1:{bound_port}, SQLite turns=1 (in=321, cached=654, out=45), "
-        f"port released, lingering_threads=0, child_subprocesses=0"
+        f"port released, lingering_threads=0, child_subprocesses=0; "
+        f"CLI `serve` vs `start_background_proxy` 5-request parity (JSON 200, SSE 200, truncated SSE 200, blocked secret 400, redacted secret 200) -> 100% identical statuses, SQLite rows, & upstream headers"
     )
 finally:
     r8_srv.shutdown()
@@ -1499,11 +1802,11 @@ PY
 #                  Apply each M1 fault -> run named test -> assert FAILED
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- [Supplemental W1] Automated M1 Mutation Verification (11 M1 & Rework Faults) ---"
+echo "--- [Supplemental W1] Automated M1 Mutation Verification (16 M1 & Rework Faults) ---"
 
 MUT_DIR="$TMP_DIR/m1_mut_copy"
 mkdir -p "$MUT_DIR"
-cp -R "${ROOT_DIR}/src" "${ROOT_DIR}/tests" "${ROOT_DIR}/docs" "${ROOT_DIR}/README.md" "${ROOT_DIR}/README.zh-CN.md" "${ROOT_DIR}/pyproject.toml" "$MUT_DIR/"
+cp -R "${ROOT_DIR}/src" "${ROOT_DIR}/tests" "${ROOT_DIR}/Scripts" "${ROOT_DIR}/docs" "${ROOT_DIR}/README.md" "${ROOT_DIR}/README.zh-CN.md" "${ROOT_DIR}/pyproject.toml" "$MUT_DIR/"
 
 "$PYTHON" - "$MUT_DIR" "$PYTHON" <<'PY'
 import pathlib, subprocess, sys
@@ -1591,6 +1894,45 @@ mutations = [
         "                stream_truncated=False,",
         "tests.test_proxy.ProxySecurityAndPrivacyTests.test_xr4_premature_upstream_disconnect_sets_stream_truncated_across_framing_modes",
     ),
+    (
+        "XR5_unconverged_path_skips_placeholder",
+        "src/agent_xray/privacy.py",
+        "    stages, converged = _unquote_with_convergence(stripped, max_rounds=_MAX_UNQUOTE_ROUNDS)\n"
+        "    if not converged:\n"
+        "        return UNCONVERGED_PATH_PLACEHOLDER",
+        "    stages, converged = _unquote_with_convergence(stripped, max_rounds=_MAX_UNQUOTE_ROUNDS)\n"
+        "    if False and not converged:\n"
+        "        return UNCONVERGED_PATH_PLACEHOLDER",
+        "tests.test_privacy.PrivacyAndRedactionTests.test_xr5_unconverged_percent_encoding_placeholder_and_strict_8_round_cap",
+    ),
+    (
+        "XR5_block_secrets_ignores_unconverged_path",
+        "src/agent_xray/privacy.py",
+        "        if not path_converged:",
+        "        if False and not path_converged:",
+        "tests.test_proxy.ProxySecurityAndPrivacyTests.test_xr5_proxy_9_and_12_layer_encoded_secrets_placeholder_in_sqlite_and_blocked",
+    ),
+    (
+        "XR6_content_length_shortfall_ignored",
+        "src/agent_xray/proxy.py",
+        "                    and raw_bytes_read < expected_content_length",
+        "                    and False and raw_bytes_read < expected_content_length",
+        "tests.test_proxy.ProxySecurityAndPrivacyTests.test_xr6_three_independent_truncation_paths_and_inspector_html_warnings",
+    ),
+    (
+        "XR6_cli_report_hides_truncation_warning",
+        "src/agent_xray/cli.py",
+        '    truncated_count = int(s.get("truncated_count") or 0)',
+        "    truncated_count = 0",
+        "tests.test_cli.CliHonestyTests.test_xr6_cli_report_flags_truncated_streams_and_incomplete_cost_bilingually",
+    ),
+    (
+        "XR7_server_close_skips_handler_thread_join",
+        "src/agent_xray/proxy.py",
+        "            if th is not cur and th.is_alive():\n                th.join(timeout=2.0)",
+        "            if th is not cur and th.is_alive():\n                pass",
+        "tests.test_proxy.ProxySecurityAndPrivacyTests.test_xr7_server_close_joins_live_handler_threads_before_returning",
+    ),
 ]
 
 for label, rel_path, target, replacement, dotted_test in mutations:
@@ -1635,7 +1977,7 @@ PY
 
 echo ""
 if [[ "$M1_ROW7_SKIPPED" -eq 1 ]]; then
-  echo "=== M1 ACCEPTANCE SUMMARY: rows_passed=7 (Rows 1,2,3,4,5,6,8), rows_skipped=1 (Row 7 live paid API: 没跑), rows_failed=0, mutations_killed=11/11 ==="
+  echo "=== M1 ACCEPTANCE SUMMARY: rows_passed=7 (Rows 1,2,3,4,5,6,8), rows_skipped=1 (Row 7 live paid API: 没跑), rows_failed=0, mutations_killed=16/16 ==="
 else
-  echo "=== M1 ACCEPTANCE SUMMARY: rows_passed=8 (Rows 1,2,3,4,5,6,7,8), rows_skipped=0, rows_failed=0, mutations_killed=11/11 ==="
+  echo "=== M1 ACCEPTANCE SUMMARY: rows_passed=8 (Rows 1,2,3,4,5,6,7,8), rows_skipped=0, rows_failed=0, mutations_killed=16/16 ==="
 fi

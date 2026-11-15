@@ -1321,6 +1321,603 @@ class ProxySecurityAndPrivacyTests(unittest.TestCase):
             after_threads = {t.ident for t in threading.enumerate()}
             self.assertEqual(after_threads - baseline_threads, set())
 
+    def test_xr5_proxy_9_and_12_layer_encoded_secrets_placeholder_in_sqlite_and_blocked(self) -> None:
+        import urllib.parse
+        from agent_xray.proxy import start_background_proxy
+
+        def encode_layers(secret: str, layers: int, full_hex: bool = False) -> str:
+            cur = "".join(f"%{ord(ch):02X}" for ch in secret) if full_hex else secret.replace("-", "%2D")
+            for _ in range(layers - 1):
+                cur = urllib.parse.quote(cur, safe="")
+            return cur
+
+        up_hits = 0
+
+        class _XR5Upstream(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:
+                nonlocal up_hits
+                cl = int(self.headers.get("Content-Length") or "0")
+                if cl:
+                    _ = self.rfile.read(cl)
+                up_hits += 1
+                out = b'{"id":"msg_xr5","usage":{"input_tokens":15,"output_tokens":3}}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+
+        up_srv = ThreadingHTTPServer(("127.0.0.1", 0), _XR5Upstream)
+        up_port = up_srv.server_address[1]
+        threading.Thread(target=up_srv.serve_forever, daemon=True).start()
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                s_test = "sk-test-FAKE1234567890abcdef"
+                s_ant = "sk-ant-FAKE00001234567890abcdef"
+                body_ok = json.dumps(
+                    {"model": "claude-sonnet-4-5", "messages": [{"role": "user", "content": "ping"}]}
+                ).encode("utf-8")
+
+                # 1. --block-secrets OFF: 9-layer and 12-layer paths forward (200), but SQLite stores ONLY placeholder path
+                db_off = Path(tmp) / "xr5_off.db"
+                with start_background_proxy(
+                    db_path=db_off,
+                    upstream=f"http://127.0.0.1:{up_port}",
+                    block_secrets=False,
+                    store_previews=True,
+                ) as px_off:
+                    for depth in (9, 12):
+                        for raw_sec, full_hex in [(s_test, False), (s_ant, True)]:
+                            enc = encode_layers(raw_sec, depth, full_hex=full_hex)
+                            hc = http.client.HTTPConnection("127.0.0.1", px_off.port, timeout=5)
+                            hc.request(
+                                "POST",
+                                f"/anthropic/{enc}/v1/messages",
+                                body=body_ok,
+                                headers={"Content-Type": "application/json"},
+                            )
+                            resp = hc.getresponse()
+                            _ = resp.read()
+                            hc.close()
+                            self.assertEqual(resp.status, 200)
+
+                self.assertEqual(up_hits, 4)
+                conn_off = sqlite3.connect(str(db_off))
+                rows_off = conn_off.execute("SELECT provider, path, status_code, blocked FROM traces").fetchall()
+                dump_off = "\n".join(conn_off.iterdump())
+                conn_off.close()
+                self.assertEqual(len(rows_off), 4)
+                for prov, p_stored, code, blk in rows_off:
+                    self.assertEqual(prov, "anthropic")
+                    self.assertEqual(p_stored, "/[REDACTED_UNCONVERGED_ENCODED_PATH]")
+                    self.assertEqual(code, 200)
+                    self.assertEqual(blk, 0)
+                raw_bytes_off = b"".join(
+                    p.read_bytes() for p in [db_off, Path(f"{db_off}-wal"), Path(f"{db_off}-shm")] if p.exists()
+                )
+                for needle in ("FAKE1234567890abcdef", "FAKE00001234567890abcdef", "%2525", "73%25"):
+                    self.assertNotIn(needle, dump_off)
+                    self.assertNotIn(needle.encode("utf-8"), raw_bytes_off)
+
+                # 2. --block-secrets ON: 9-layer, 12-layer, and 17-layer paths/queries rejected with HTTP 400 (upstream=0)
+                up_hits = 0
+                db_on = Path(tmp) / "xr5_on.db"
+                with start_background_proxy(
+                    db_path=db_on,
+                    upstream=f"http://127.0.0.1:{up_port}",
+                    block_secrets=True,
+                ) as px_on:
+                    for depth in (9, 12, 17):
+                        for raw_sec, full_hex in [(s_test, False), (s_ant, True)]:
+                            enc = encode_layers(raw_sec, depth, full_hex=full_hex)
+                            hc = http.client.HTTPConnection("127.0.0.1", px_on.port, timeout=5)
+                            hc.request(
+                                "POST",
+                                f"/anthropic/{enc}/v1/messages",
+                                body=body_ok,
+                                headers={"Content-Type": "application/json"},
+                            )
+                            resp = hc.getresponse()
+                            err_raw = resp.read().decode("utf-8", errors="replace")
+                            hc.close()
+                            self.assertEqual(resp.status, 400, f"Expected 400 at depth={depth} full_hex={full_hex}")
+                            self.assertNotIn("FAKE1234567890abcdef", err_raw)
+                            self.assertNotIn("%2525", err_raw)
+
+                    # Query string at 9 and 12 layers also rejected with HTTP 400
+                    for depth in (9, 12):
+                        enc_q = encode_layers(s_test, depth, full_hex=False)
+                        hc = http.client.HTTPConnection("127.0.0.1", px_on.port, timeout=5)
+                        hc.request(
+                            "POST",
+                            f"/anthropic/v1/messages?api_key={enc_q}",
+                            body=body_ok,
+                            headers={"Content-Type": "application/json"},
+                        )
+                        resp = hc.getresponse()
+                        _ = resp.read()
+                        hc.close()
+                        self.assertEqual(resp.status, 400)
+
+                self.assertEqual(up_hits, 0)
+                conn_on = sqlite3.connect(str(db_on))
+                rows_on = conn_on.execute("SELECT provider, path, status_code, blocked FROM traces ORDER BY id").fetchall()
+                dump_on = "\n".join(conn_on.iterdump())
+                conn_on.close()
+                self.assertEqual(len(rows_on), 8)
+                for prov, p_stored, code, blk in rows_on[:6]:
+                    self.assertEqual(prov, "anthropic")
+                    self.assertEqual(p_stored, "/[REDACTED_UNCONVERGED_ENCODED_PATH]")
+                    self.assertEqual(code, 400)
+                    self.assertEqual(blk, 1)
+                for prov, p_stored, code, blk in rows_on[6:]:
+                    self.assertEqual(prov, "anthropic")
+                    self.assertEqual(p_stored, "/anthropic/v1/messages")
+                    self.assertEqual(code, 400)
+                    self.assertEqual(blk, 1)
+                raw_bytes_on = b"".join(
+                    p.read_bytes() for p in [db_on, Path(f"{db_on}-wal"), Path(f"{db_on}-shm")] if p.exists()
+                )
+                for needle in ("FAKE1234567890abcdef", "FAKE00001234567890abcdef", "%2525", "73%25"):
+                    self.assertNotIn(needle, dump_on)
+                    self.assertNotIn(needle.encode("utf-8"), raw_bytes_on)
+        finally:
+            up_srv.shutdown()
+            up_srv.server_close()
+
+    def test_xr6_three_independent_truncation_paths_and_inspector_html_warnings(self) -> None:
+        import socket
+        from agent_xray.proxy import start_background_proxy
+        from agent_xray.store import build_demo_dataset
+        from agent_xray.ui_html import render_inspector_html
+
+        def orthogonal_truncation_upstream(srv_sock: socket.socket) -> None:
+            # Turn 1 (Control): complete SSE with message_stop -> stream_truncated = False
+            c1, _ = srv_sock.accept()
+            self._drain_http_head(c1)
+            c1.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n"
+                b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":100}}}\n\n'
+                b'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":20}}\n\n'
+                b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+            )
+            c1.close()
+
+            # Turn 2 (Path 1 ONLY - usage_parser.is_truncated):
+            # Unframed SSE closes cleanly at EOF without message_stop / [DONE] (no Content-Length, no read error)
+            c2, _ = srv_sock.accept()
+            self._drain_http_head(c2)
+            c2.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n"
+                b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":120}}}\n\n'
+                b'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"text":"half"}}\n\n'
+            )
+            c2.close()
+
+            # Turn 3 (Path 2 ONLY - Content-Length shortfall):
+            # Sends syntactically complete JSON (59 bytes) so usage_parser.is_truncated is False,
+            # and closes cleanly so read1 returns b"" without exception, while Content-Length declares 500!
+            c3, _ = srv_sock.accept()
+            self._drain_http_head(c3)
+            valid_json_short = b'{"id":"m_cl","usage":{"input_tokens":50,"output_tokens":5}}'
+            c3.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 500\r\n\r\n"
+                + valid_json_short
+            )
+            c3.close()
+
+            # Turn 4 (Path 3 ONLY - mid-stream broken chunked / abnormal disconnect):
+            # Chunk 1 contains syntactically complete JSON so usage_parser.is_truncated is False,
+            # Content-Length is absent, and trailing broken chunk header without 0\r\n\r\n raises in read1!
+            c4, _ = srv_sock.accept()
+            self._drain_http_head(c4)
+            valid_json_chunk = b'{"id":"m_ch","usage":{"input_tokens":40,"output_tokens":8}}'
+            c4.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n"
+                + f"{len(valid_json_chunk):x}\r\n".encode("ascii")
+                + valid_json_chunk
+                + b"\r\nZZZZ_BROKEN_CHUNK\r\n"
+            )
+            c4.close()
+
+        srv_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv_sock.bind(("127.0.0.1", 0))
+        srv_sock.listen(8)
+        up_port = srv_sock.getsockname()[1]
+        threading.Thread(target=orthogonal_truncation_upstream, args=(srv_sock,), daemon=True).start()
+
+        try:
+            with start_background_proxy(upstream=f"http://127.0.0.1:{up_port}") as px:
+                req_body = b'{"model":"claude-sonnet-4-5","stream":true,"messages":[{"role":"user","content":"test"}]}'
+                for _ in range(4):
+                    s = socket.create_connection(("127.0.0.1", px.port), timeout=5)
+                    s.sendall(
+                        f"POST /anthropic/v1/messages HTTP/1.1\r\nHost: 127.0.0.1:{px.port}\r\n"
+                        f"Content-Type: application/json\r\nContent-Length: {len(req_body)}\r\n\r\n".encode("utf-8")
+                        + req_body
+                    )
+                    try:
+                        while s.recv(4096):
+                            pass
+                    except OSError:
+                        pass
+                    s.close()
+
+                turns = self._wait_for_turn_count(px, 4)
+                self.assertEqual([t["stream_truncated"] for t in turns], [False, True, True, True])
+                dataset = px.get_totals()
+                self.assertEqual(dataset["summary"]["truncated_count"], 3)
+
+                html_en = render_inspector_html(dataset, lang="en")
+                html_zh = render_inspector_html(dataset, lang="zh")
+
+                # Static SSR & client I18N must surface truncated badge, count, turn numbers, and incomplete cost note
+                self.assertIn('id="truncation-notice" class="alert-banner">', html_en)
+                self.assertIn("[TRUNCATED]", html_en)
+                self.assertIn("usage &amp; cost incomplete", html_en)
+                for turn_ref in ("#2", "#3", "#4"):
+                    self.assertIn(turn_ref, html_en)
+
+                self.assertIn('id="truncation-notice" class="alert-banner">', html_zh)
+                self.assertIn("[流已截断]", html_zh)
+                self.assertIn("用量与费用不完整", html_zh)
+                for turn_ref in ("#2", "#3", "#4"):
+                    self.assertIn(turn_ref, html_zh)
+
+                # Healthy demo dataset (truncated_count == 0) keeps notice hidden
+                demo_html = render_inspector_html(build_demo_dataset(), lang="en")
+                self.assertIn('id="truncation-notice" class="alert-banner" hidden>', demo_html)
+        finally:
+            srv_sock.close()
+
+    def test_xr7_server_close_joins_live_handler_threads_before_returning(self) -> None:
+        import socket
+        import time
+        from agent_xray.proxy import start_background_proxy
+
+        with start_background_proxy() as px:
+            # Open a client socket and send an incomplete HTTP request line (no \r\n\r\n),
+            # keeping the spawned handler thread alive in parse_request() outside _inflight_count.
+            slow_client = socket.create_connection(("127.0.0.1", px.port), timeout=5)
+            slow_client.sendall(b"POST /anthropic/v1/messages HTTP/1.1\r\nHost: 127.0.0.1")
+
+            deadline = time.monotonic() + 2.0
+            live_handlers: list[threading.Thread] = []
+            while time.monotonic() < deadline:
+                with px.server._threads_lock:
+                    live_handlers = [th for th in px.server._handler_threads if th.is_alive()]
+                if live_handlers:
+                    break
+                time.sleep(0.01)
+            self.assertEqual(len(live_handlers), 1)
+            handler_thread = live_handlers[0]
+            self.assertTrue(handler_thread.is_alive())
+
+            # First stop the accept loop (`shutdown()` polls at 0.5s), then verify handler_thread
+            # is STILL alive right before `server_close()` is invoked!
+            px.server.shutdown()
+            self.assertTrue(handler_thread.is_alive())
+
+            entering_close = threading.Event()
+
+            def _release_client_during_server_close() -> None:
+                entering_close.wait(timeout=2.0)
+                time.sleep(0.12)
+                try:
+                    slow_client.close()
+                except OSError:
+                    pass
+
+            releaser = threading.Thread(target=_release_client_during_server_close, daemon=True)
+            releaser.start()
+
+            # Because XRayHTTPServer sets daemon_threads = True, stdlib ThreadingMixIn.server_close()
+            # skips joining threads; XRayHTTPServer.server_close() MUST join handler_thread itself!
+            entering_close.set()
+            px.server.server_close()
+            try:
+                self.assertFalse(
+                    handler_thread.is_alive(),
+                    "XRayHTTPServer.server_close() returned while handler_thread was still alive!",
+                )
+            finally:
+                slow_client.close()
+                releaser.join(timeout=1.0)
+
+    def test_xr7_cli_serve_vs_start_background_proxy_side_by_side_parity(self) -> None:
+        import os
+        import signal
+        import socket
+        import subprocess
+        import sys
+        import time
+        from agent_xray.proxy import start_background_proxy
+
+        upstream_records: list[tuple[str, dict[str, str], bytes]] = []
+        rec_lock = threading.Lock()
+
+        def parity_upstream(srv_sock: socket.socket) -> None:
+            while True:
+                try:
+                    conn_s, _ = srv_sock.accept()
+                except OSError:
+                    break
+                try:
+                    buf = b""
+                    while b"\r\n\r\n" not in buf:
+                        ch = conn_s.recv(1024)
+                        if not ch:
+                            break
+                        buf += ch
+                    if b"\r\n\r\n" not in buf:
+                        conn_s.close()
+                        continue
+                    head_b, rest_b = buf.split(b"\r\n\r\n", 1)
+                    lines = head_b.decode("iso-8859-1").split("\r\n")
+                    req_path = lines[0].split(" ")[1]
+                    hdr_map: dict[str, str] = {}
+                    cl = 0
+                    for ln in lines[1:]:
+                        if ":" in ln:
+                            k, v = ln.split(":", 1)
+                            hdr_map[k.strip().lower()] = v.strip()
+                            if k.strip().lower() == "content-length":
+                                cl = int(v.strip())
+                    while len(rest_b) < cl:
+                        ch = conn_s.recv(min(4096, cl - len(rest_b)))
+                        if not ch:
+                            break
+                        rest_b += ch
+                    for hk in ("host", "content-length", "accept-encoding", "connection"):
+                        hdr_map.pop(hk, None)
+                    with rec_lock:
+                        upstream_records.append((req_path, hdr_map, rest_b))
+
+                    payload = json.loads(rest_b.decode("utf-8"))
+                    tag = str(payload.get("user") or "")
+                    if tag == "sse_ok":
+                        conn_s.sendall(
+                            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n"
+                            b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":80,"cache_read_input_tokens":20}}}\n\n'
+                            b'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":15}}\n\n'
+                            b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+                        )
+                    elif tag == "sse_trunc":
+                        conn_s.sendall(
+                            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n"
+                            b'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":60}}}\n\n'
+                        )
+                    else:
+                        out = json.dumps(
+                            {"id": "m_par", "usage": {"input_tokens": 110, "cache_read_input_tokens": 40, "output_tokens": 22}}
+                        ).encode("utf-8")
+                        conn_s.sendall(
+                            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                            + f"Content-Length: {len(out)}\r\n\r\n".encode("ascii")
+                            + out
+                        )
+                finally:
+                    conn_s.close()
+
+        srv_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv_sock.bind(("127.0.0.1", 0))
+        srv_sock.listen(16)
+        up_port = srv_sock.getsockname()[1]
+        threading.Thread(target=parity_upstream, args=(srv_sock,), daemon=True).start()
+
+        def _send_four_requests(port: int) -> list[int]:
+            fake_key = "sk-ant-FAKE00001234567890abcdef"
+            cases = [
+                # 1. Normal JSON with telemetry header (stripped) + auth header (redacted)
+                (
+                    "/anthropic/v1/messages",
+                    {"model": "claude-sonnet-4-5", "user": "json_ok", "messages": [{"role": "user", "content": "hello"}]},
+                    {"Content-Type": "application/json", "x-api-key": fake_key, "x-stainless-os": "Darwin"},
+                ),
+                # 2. Streaming SSE
+                (
+                    "/anthropic/v1/messages",
+                    {"model": "claude-sonnet-4-5", "stream": True, "user": "sse_ok", "messages": [{"role": "user", "content": "stream"}]},
+                    {"Content-Type": "application/json", "x-api-key": fake_key},
+                ),
+                # 3. Prematurely truncated SSE stream
+                (
+                    "/anthropic/v1/messages",
+                    {"model": "claude-sonnet-4-5", "stream": True, "user": "sse_trunc", "messages": [{"role": "user", "content": "trunc"}]},
+                    {"Content-Type": "application/json", "x-api-key": fake_key},
+                ),
+                # 4. Leaked secret in body blocked with HTTP 400 under --block-secrets
+                (
+                    "/anthropic/v1/messages",
+                    {"model": "claude-sonnet-4-5", "user": "blocked_leak", "messages": [{"role": "user", "content": f"leak {fake_key}"}]},
+                    {"Content-Type": "application/json"},
+                ),
+            ]
+            statuses: list[int] = []
+            for path, obj, hdrs in cases:
+                raw_b = json.dumps(obj).encode("utf-8")
+                hc = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                hc.request("POST", path, body=raw_b, headers=hdrs)
+                r = hc.getresponse()
+                _ = r.read()
+                statuses.append(r.status)
+                hc.close()
+            return statuses
+
+        def _read_normalized_db_rows(db_p: Path) -> list[tuple[object, ...]]:
+            conn = sqlite3.connect(str(db_p))
+            rows = conn.execute(
+                "SELECT provider, model, path, status_code, blocked, stream_truncated, "
+                "buckets_json, namespaces_json, usage_json, headers_json, secrets_json, prompt_preview "
+                "FROM traces ORDER BY id"
+            ).fetchall()
+            conn.close()
+            return rows
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                repo_root = Path(__file__).resolve().parents[1]
+                cli_db = Path(tmp) / "cli_serve.db"
+                prog_db = Path(tmp) / "prog_api.db"
+
+                # Pick free loopback port for CLI `serve`
+                ephem = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                ephem.bind(("127.0.0.1", 0))
+                cli_port = ephem.getsockname()[1]
+                ephem.close()
+
+                env_cli = os.environ.copy()
+                env_cli["PYTHONPATH"] = str(repo_root / "src")
+                cli_proc = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "agent_xray.cli",
+                        "--lang",
+                        "en",
+                        "serve",
+                        "--port",
+                        str(cli_port),
+                        "--db",
+                        str(cli_db),
+                        "--upstream",
+                        f"http://127.0.0.1:{up_port}",
+                        "--strip-telemetry-headers",
+                        "--block-secrets",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env_cli,
+                )
+                try:
+                    # Wait for CLI proxy socket to accept connections
+                    ready = False
+                    for _ in range(100):
+                        try:
+                            probe = socket.create_connection(("127.0.0.1", cli_port), timeout=0.2)
+                            probe.close()
+                            ready = True
+                            break
+                        except OSError:
+                            time.sleep(0.03)
+                    self.assertTrue(ready, "CLI `agent-xray serve` did not start in time")
+
+                    cli_statuses = _send_four_requests(cli_port)
+                    with rec_lock:
+                        cli_upstream = list(upstream_records)
+                        upstream_records.clear()
+                finally:
+                    cli_proc.send_signal(signal.SIGINT)
+                    cli_proc.communicate(timeout=5)
+
+                with start_background_proxy(
+                    db_path=prog_db,
+                    upstream=f"http://127.0.0.1:{up_port}",
+                    strip_telemetry=True,
+                    block_secrets=True,
+                ) as px_prog:
+                    prog_statuses = _send_four_requests(px_prog.port)
+                    _ = self._wait_for_turn_count(px_prog, 4)
+                    with rec_lock:
+                        prog_upstream = list(upstream_records)
+                        upstream_records.clear()
+
+                self.assertEqual(cli_statuses, [200, 200, 200, 400])
+                self.assertEqual(prog_statuses, cli_statuses)
+                self.assertEqual(cli_upstream, prog_upstream)
+                self.assertEqual(_read_normalized_db_rows(cli_db), _read_normalized_db_rows(prog_db))
+
+                # Also compare secret-redacted HTTP 200 mode (`--store-previews`, no `--block-secrets`)
+                cli_red_db = Path(tmp) / "cli_redact.db"
+                prog_red_db = Path(tmp) / "prog_redact.db"
+                ephem2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                ephem2.bind(("127.0.0.1", 0))
+                cli_port2 = ephem2.getsockname()[1]
+                ephem2.close()
+
+                fake_key = "sk-ant-FAKE00001234567890abcdef"
+                red_body = json.dumps(
+                    {
+                        "model": "claude-sonnet-4-5",
+                        "user": "redact_200",
+                        "messages": [{"role": "user", "content": f"inline key {fake_key}"}],
+                    }
+                ).encode("utf-8")
+                red_path = f"/anthropic/{fake_key}/v1/messages"
+
+                cli_proc2 = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "agent_xray.cli",
+                        "--lang",
+                        "en",
+                        "serve",
+                        "--port",
+                        str(cli_port2),
+                        "--db",
+                        str(cli_red_db),
+                        "--upstream",
+                        f"http://127.0.0.1:{up_port}",
+                        "--strip-telemetry-headers",
+                        "--store-previews",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env_cli,
+                )
+                try:
+                    for _ in range(100):
+                        try:
+                            pr = socket.create_connection(("127.0.0.1", cli_port2), timeout=0.2)
+                            pr.close()
+                            break
+                        except OSError:
+                            time.sleep(0.03)
+                    hc_c = http.client.HTTPConnection("127.0.0.1", cli_port2, timeout=5)
+                    hc_c.request("POST", red_path, body=red_body, headers={"Content-Type": "application/json", "x-stainless-os": "Darwin"})
+                    rc_c = hc_c.getresponse()
+                    _ = rc_c.read()
+                    hc_c.close()
+                    self.assertEqual(rc_c.status, 200)
+                    with rec_lock:
+                        cli_red_up = list(upstream_records)
+                        upstream_records.clear()
+                finally:
+                    cli_proc2.send_signal(signal.SIGINT)
+                    cli_proc2.communicate(timeout=5)
+
+                with start_background_proxy(
+                    db_path=prog_red_db,
+                    upstream=f"http://127.0.0.1:{up_port}",
+                    strip_telemetry=True,
+                    block_secrets=False,
+                    store_previews=True,
+                ) as px_red:
+                    hc_p = http.client.HTTPConnection("127.0.0.1", px_red.port, timeout=5)
+                    hc_p.request("POST", red_path, body=red_body, headers={"Content-Type": "application/json", "x-stainless-os": "Darwin"})
+                    rc_p = hc_p.getresponse()
+                    _ = rc_p.read()
+                    hc_p.close()
+                    self.assertEqual(rc_p.status, 200)
+                    _ = self._wait_for_turn_count(px_red, 1)
+                    with rec_lock:
+                        prog_red_up = list(upstream_records)
+                        upstream_records.clear()
+
+                self.assertEqual(cli_red_up, prog_red_up)
+                self.assertEqual(_read_normalized_db_rows(cli_red_db), _read_normalized_db_rows(prog_red_db))
+        finally:
+            srv_sock.close()
+
 
 if __name__ == "__main__":
     unittest.main()

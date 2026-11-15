@@ -23,17 +23,23 @@ def _format_summary_cost(summary: dict[str, object], lang: str) -> str:
     labels = HONEST_LABELS[lang]
     est_cost = summary.get("estimated_cost_usd")
     unknown_turns = int(summary.get("unknown_price_turn_count") or 0)
+    truncated_turns = int(summary.get("truncated_count") or 0)
     pricing_date = str(summary.get("pricing_date") or "unverified")
+    inc_note = labels["truncated_incomplete_note"]
     if est_cost is None:
+        if truncated_turns > 0:
+            return f"{labels['unknown_price']}（{inc_note}）" if lang == "zh" else f"{labels['unknown_price']} ({inc_note})"
         return labels["unknown_price"]
     base = format_usd(float(est_cost))
     if unknown_turns > 0:
-        if lang == "zh":
-            return f"{base}（+{unknown_turns} 轮{labels['unknown_price']}）"
-        return f"{base} (+{unknown_turns} {labels['unknown_price']})"
-    if pricing_date == "unverified":
-        return f"{base}（未核对）" if lang == "zh" else f"{base} (unverified)"
-    return f"{base} ({pricing_date})"
+        detail = f"+{unknown_turns} 轮{labels['unknown_price']}" if lang == "zh" else f"+{unknown_turns} {labels['unknown_price']}"
+    elif pricing_date == "unverified":
+        detail = "未核对" if lang == "zh" else "unverified"
+    else:
+        detail = pricing_date
+    if truncated_turns > 0:
+        detail = f"{detail}；{inc_note}" if lang == "zh" else f"{detail}; {inc_note}"
+    return f"{base}（{detail}）" if lang == "zh" else f"{base} ({detail})"
 
 
 def _print_startup_token(token: str, lang: str) -> None:
@@ -65,6 +71,8 @@ def _print_terminal_summary(store: TraceStore, lang: str = "en") -> None:
     cache_denom = int(s["total_actual_input"]) + int(s["total_cache_read"]) + int(s["total_cache_write"])
     hit_pct = round(float(s["cache_hit_ratio"]) * 100)
     cost_str = _format_summary_cost(s, "zh" if is_zh else "en")
+    truncated_count = int(s.get("truncated_count") or 0)
+    truncated_traces = [t for t in data["traces"] if bool(t.get("stream_truncated"))]
 
     if is_zh:
         if has_any_buckets and est_input > 0:
@@ -73,15 +81,21 @@ def _print_terminal_summary(store: TraceStore, lang: str = "en") -> None:
         else:
             tool_str = f"{labels['tool_definition_tokens']}：{labels['no_data']}"
             mcp_str = f"{labels['mcp_tool_share']}：{labels['no_data']}"
+        trunc_part_zh = f" | {labels['truncated_streams']}：{truncated_count}" if truncated_count > 0 else ""
         print(
             f"\n[agent-xray] 会话摘要：共 {s['turn_count']} 轮 | "
             f"{tool_str} | {mcp_str} | "
             f"{labels['cache_hit_rate']}：{hit_pct}%（{s['total_cache_read']:,} / {cache_denom:,} tok）| "
             f"估算费用：{cost_str} | "
             f"{labels['stripped_telemetry_headers']}：{s['stripped_header_count']} | "
-            f"拦截密钥外泄：{s['blocked_count']}",
+            f"拦截密钥外泄：{s['blocked_count']}{trunc_part_zh}",
             file=sys.stderr,
         )
+        for tr in truncated_traces:
+            print(
+                f"  ! {labels['truncated_badge']} 第 {tr['turn_number']} 轮（{tr['model']} {tr['path']}）：{labels['truncated_turn_warning']}",
+                file=sys.stderr,
+            )
         for ns in data["top_namespaces"][:5]:
             print(
                 f"  - {ns['namespace']:<18} {ns['max_tools']:>3} 个工具   "
@@ -97,15 +111,21 @@ def _print_terminal_summary(store: TraceStore, lang: str = "en") -> None:
         tool_str = f"{labels['tool_definition_tokens']}: {labels['no_data']}"
         mcp_str = f"{labels['mcp_tool_share']}: {labels['no_data']}"
 
+    trunc_part_en = f" | {labels['truncated_streams']}: {truncated_count}" if truncated_count > 0 else ""
     print(
         f"\n[agent-xray] Session summary: {s['turn_count']} turns | "
         f"{tool_str} | {mcp_str} | "
         f"{labels['cache_hit_rate']}: {hit_pct}% ({s['total_cache_read']:,} / {cache_denom:,} tok) | "
         f"Cost: {cost_str} | "
         f"{labels['stripped_telemetry_headers']}: {s['stripped_header_count']} | "
-        f"Blocked leaks: {s['blocked_count']}",
+        f"Blocked leaks: {s['blocked_count']}{trunc_part_en}",
         file=sys.stderr,
     )
+    for tr in truncated_traces:
+        print(
+            f"  ! {labels['truncated_badge']} Turn #{tr['turn_number']} ({tr['model']} {tr['path']}): {labels['truncated_turn_warning']}",
+            file=sys.stderr,
+        )
     for ns in data["top_namespaces"][:5]:
         print(
             f"  - {ns['namespace']:<18} {ns['max_tools']:>3} tools   "

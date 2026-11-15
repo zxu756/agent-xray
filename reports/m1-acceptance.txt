@@ -2,8 +2,8 @@
 Isolated temp dir: <mktemp>/xray-m1-accept (cleaned on exit)
 
 --- [Row 1 & Row 2] True read1 SSE Latency (20x 100B @ 200ms) & Clean Mid-Stream Disconnect ---
-ROW 1 [PASS]: 20x 100B SSE events @ 200ms -> min_delta_ms=0.12, median_delta_ms=0.32, max_delta_ms=1.48 (< 50.0 ms)
-ROW 2 [PASS]: Upstream mid-stream disconnect -> 10 complete events, clean EOF, stream_truncated=True (conn1=False), 'HTTP/1.1' in body=0, '502' in body=0; client disconnect survived cleanly (recorded ttft_ms=1.72)
+ROW 1 [PASS]: 20x 100B SSE events @ 200ms -> min_delta_ms=0.18, median_delta_ms=0.67, max_delta_ms=2.27 (< 50.0 ms)
+ROW 2 [PASS]: Upstream mid-stream disconnect -> 10 complete events, clean EOF, stream_truncated=True (conn1=False), 'HTTP/1.1' in body=0, '502' in body=0; client disconnect survived cleanly (recorded ttft_ms=4.02)
 
 --- [Row 3] >2 MB SSE Usage, Gzip Request/Response, Header Fidelity & Programmatic API ---
 ROW 3 [PASS]: 2.3MB Anthropic SSE output_tokens=9876, 2.2MB Responses SSE output_tokens=4321, gzip req/resp intact, openai-organization/project & duplicate headers preserved, programmatic API totals verified
@@ -21,18 +21,20 @@ ROW 6 [PASS]: 13/13 secret vectors (count_tokens, batches, embeddings, responses
 PART2-X14 [PASS]: Dynamic PRAGMA table_info verified 16 columns (id,created_at,provider,model,path,status_code,latency_ms,ttft_ms,blocked,stream_truncated,buckets_json,namespaces_json,usage_json,headers_json,secrets_json,prompt_preview) across tables=['traces', 'sqlite_sequence']; sqlite3 .dump secret matches=0 incl. double-encoded %252D path (block OFF & ON)
 PART2-PRICING [PASS]: claude-sonnet-4-5 <=200k=$0.1950 vs >200k=$0.7410; claude-sonnet-4-6 >200k flat=$0.3780; unlisted claude-sonnet-4-7=None (Unknown price)
 PART2-ESTIMATED [PASS]: JSON `is_estimated=true`, CLI `(Estimated)`/`（估算）`, and HTML `(Estimated)`/`（估算）` verified
+PART2-XR5 [PASS]: _MAX_UNQUOTE_ROUNDS=8 preserved; 9-layer & 12-layer encoded fake secrets stored as /[REDACTED_UNCONVERGED_ENCODED_PATH] (0 bytes leaked in SQLite/WAL) and rejected with HTTP 400 under --block-secrets
+PART2-XR6 [PASS]: CLI `report` (EN/ZH) and Web UI HTML (EN/ZH) flag `[TRUNCATED]`/`[流已截断]` and `usage & cost incomplete`/`用量与费用不完整`
 
 --- [Part 2 W4] Collection & Estimation Source Scan for Fixed Ratios (0.12 / 0.28 / 0.34) ---
 PART2-W4 [PASS]: grep -rnE '\b0\.(12|28|34)\b' src/ --exclude='ui_html.py' -> 0 matches
 
 --- [Row 7] Live External API Tokenizer Calibration Check ---
-ROW 7 [OFFLINE CALIBRATION HARNESS CHECK]: ok (recorded_turns=6, ant_max_err=7.57%, oai_max_err=7.59%)
+ROW 7 [离线管线自检 / offline_pipeline_self_check]: ok (recorded_turns=6, anthropic_turns=3, openai_turns=3, synthetic_fixture_match=6/6; 仅验证本地回环管线连通，非真实分词器误差 / local pipeline wiring self-check only, NOT vendor tokenizer accuracy)
 ROW 7 [SKIPPED / 没跑]: XRAY_REAL_API!=1; live paid API calibration not executed (counted as skipped=1, NOT passed)
 
 --- [Row 8] start_background_proxy Programmatic Interface & Lifecycle Check ---
-ROW 8 [PASS]: start_background_proxy(11 SPEC kwargs) -> TypeError=0, bind=127.0.0.1:57143, SQLite turns=1 (in=321, cached=654, out=45), port released, lingering_threads=0, child_subprocesses=0
+ROW 8 [PASS]: start_background_proxy(11 SPEC kwargs) -> TypeError=0, bind=127.0.0.1:56684, SQLite turns=1 (in=321, cached=654, out=45), port released, lingering_threads=0, child_subprocesses=0; CLI `serve` vs `start_background_proxy` 5-request parity (JSON 200, SSE 200, truncated SSE 200, blocked secret 400, redacted secret 200) -> 100% identical statuses, SQLite rows, & upstream headers
 
---- [Supplemental W1] Automated M1 Mutation Verification (11 M1 & Rework Faults) ---
+--- [Supplemental W1] Automated M1 Mutation Verification (16 M1 & Rework Faults) ---
   [MUTATION KILLED] M1_Row1_buffered_read_instead_of_read1 -> test_m1_sse_streaming_latency_midstream_disconnect_and_2mb_usage failed as expected (exit=1)
   [MUTATION KILLED] M1_Row2_midstream_disconnect_injects_502 -> test_m1_sse_streaming_latency_midstream_disconnect_and_2mb_usage failed as expected (exit=1)
   [MUTATION KILLED] M1_Item2_strip_openai_organization_header -> test_m1_preserve_openai_org_project_and_duplicate_headers failed as expected (exit=1)
@@ -44,5 +46,10 @@ ROW 8 [PASS]: start_background_proxy(11 SPEC kwargs) -> TypeError=0, bind=127.0.
   [MUTATION KILLED] XR4_send_response_duplicates_server_and_date_headers -> test_xr4_no_duplicate_server_date_headers_and_no_forced_accept_encoding_identity failed as expected (exit=1)
   [MUTATION KILLED] XR4_sonnet_4_6_missing_flat_rate_entry -> test_xr4_sonnet_4_6_flat_pricing_vs_sonnet_4_5_200k_tier_and_stream_truncated_schema failed as expected (exit=1)
   [MUTATION KILLED] XR4_stream_truncated_flag_not_recorded -> test_xr4_premature_upstream_disconnect_sets_stream_truncated_across_framing_modes failed as expected (exit=1)
+  [MUTATION KILLED] XR5_unconverged_path_skips_placeholder -> test_xr5_unconverged_percent_encoding_placeholder_and_strict_8_round_cap failed as expected (exit=1)
+  [MUTATION KILLED] XR5_block_secrets_ignores_unconverged_path -> test_xr5_proxy_9_and_12_layer_encoded_secrets_placeholder_in_sqlite_and_blocked failed as expected (exit=1)
+  [MUTATION KILLED] XR6_content_length_shortfall_ignored -> test_xr6_three_independent_truncation_paths_and_inspector_html_warnings failed as expected (exit=1)
+  [MUTATION KILLED] XR6_cli_report_hides_truncation_warning -> test_xr6_cli_report_flags_truncated_streams_and_incomplete_cost_bilingually failed as expected (exit=1)
+  [MUTATION KILLED] XR7_server_close_skips_handler_thread_join -> test_xr7_server_close_joins_live_handler_threads_before_returning failed as expected (exit=1)
 
-=== M1 ACCEPTANCE SUMMARY: rows_passed=7 (Rows 1,2,3,4,5,6,8), rows_skipped=1 (Row 7 live paid API: 没跑), rows_failed=0, mutations_killed=11/11 ===
+=== M1 ACCEPTANCE SUMMARY: rows_passed=7 (Rows 1,2,3,4,5,6,8), rows_skipped=1 (Row 7 live paid API: 没跑), rows_failed=0, mutations_killed=16/16 ===

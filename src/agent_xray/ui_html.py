@@ -71,6 +71,30 @@ def render_inspector_html(
     zh_pressed = "true" if is_zh else "false"
     en_pressed = "false" if is_zh else "true"
 
+    summary_obj = dataset.get("summary") or {}
+    traces_list = dataset.get("traces") or dataset.get("turns") or []
+    ssr_trunc_cnt = int(summary_obj.get("truncated_count") or 0)
+    ssr_trunc_refs = ", ".join(
+        f"#{tr.get('turn_number')}" for tr in traces_list if tr.get("stream_truncated")
+    )
+    if ssr_trunc_cnt > 0:
+        ssr_trunc_hidden = ""
+        if is_zh:
+            ref_part = f"（轮次 {html.escape(ssr_trunc_refs)}）" if ssr_trunc_refs else ""
+            ssr_trunc_html = (
+                f"<strong>[流已截断]</strong> 共 {ssr_trunc_cnt} 轮上游响应流中途断开"
+                f"{ref_part} - 用量与费用不完整。"
+            )
+        else:
+            ref_part = f" (turn {html.escape(ssr_trunc_refs)})" if ssr_trunc_refs else ""
+            ssr_trunc_html = (
+                f"<strong>[TRUNCATED]</strong> {ssr_trunc_cnt} turn(s) ended prematurely before stream completion"
+                f"{ref_part} - usage &amp; cost incomplete."
+            )
+    else:
+        ssr_trunc_hidden = " hidden"
+        ssr_trunc_html = ""
+
     return f"""<!DOCTYPE html>
 <html lang="{html_lang_attr}" data-default-lang="{default_lang_attr}">
 <head>
@@ -717,6 +741,7 @@ def render_inspector_html(
 
 <main class="shell">
   <div id="scan-status-bar" class="scan-notice" hidden></div>
+  <div id="truncation-notice" class="alert-banner"{ssr_trunc_hidden}>{ssr_trunc_html}</div>
   <section class="stat-strip" id="kpi-strip" aria-label="Session token and privacy totals"></section>
 
   <div class="workbench">
@@ -781,7 +806,7 @@ def render_inspector_html(
 let DATA = {raw_json};
 const IS_LIVE_POLL = {poll_js};
 const XRAY_AUTH_TOKEN = {token_json};
-let selectedIdx = Math.max(0, (DATA.traces || []).length - 2);
+let selectedIdx = Math.max(0, (DATA.traces || DATA.turns || []).length - 2);
 let currentFilter = "all";
 let currentSession = "all";
 let currentLang = "en";
@@ -843,6 +868,9 @@ const I18N = {{
     thAct: "Firewall action",
     emptyHdrs: "No outbound headers recorded for this turn.",
     blockedTag: "Blocked 400",
+    truncatedBadge: "[TRUNCATED]",
+    truncatedIncomplete: "usage & cost incomplete",
+    truncatedTurnWarn: "Upstream stream truncated before completion - token usage & cost incomplete.",
     secretPrefix: "Secret egress intercepted:",
     secretSuffix: " - upstream transmission aborted locally before leaving loopback.",
     actions: {{
@@ -907,6 +935,9 @@ const I18N = {{
     thAct: "防火墙动作",
     emptyHdrs: "本轮未记录出站请求头。",
     blockedTag: "已拦截 400",
+    truncatedBadge: "[流已截断]",
+    truncatedIncomplete: "用量与费用不完整",
+    truncatedTurnWarn: "上游响应流中途截断，本轮用量与费用不完整。",
     secretPrefix: "已拦截密钥外泄：",
     secretSuffix: " - 请求已在本地回环层阻断，未发送至上游网络。",
     actions: {{
@@ -954,7 +985,8 @@ function localizeSecretRule(rule) {{
     "PEM Private Key": "PEM 私钥证书",
     "Slack Token": "Slack 令牌",
     "Google API Key": "Google API 密钥",
-    "JWT Token": "JWT 令牌"
+    "JWT Token": "JWT 令牌",
+    "Unconverged Percent-Encoding": "未收敛深层百分号编码"
   }};
   return map[s] || s;
 }}
@@ -1021,7 +1053,7 @@ async function scanDesktopSessions() {{
       lastScanCount = Number(payload.imported || 0);
       lastScanStatusKey = "live";
       DATA = payload;
-      selectedIdx = Math.max(0, (DATA.traces || []).length - 1);
+      selectedIdx = Math.max(0, (DATA.traces || DATA.turns || []).length - 1);
       render();
     }}
   }} catch (_) {{
@@ -1111,7 +1143,7 @@ function render() {{
   syncModeLabel();
   renderScanBanner();
 
-  const allTraces = DATA.traces || [];
+  const allTraces = DATA.traces || DATA.turns || [];
   syncSessionSelector(allTraces);
 
   const sessionTraces = currentSession === "all"
@@ -1141,23 +1173,44 @@ function render() {{
 
   const pricingDate = s.pricing_date || "unverified";
   const unknownTurns = Number(s.unknown_price_turn_count || 0);
+  const truncTraces = allTraces.filter(tr => Boolean(tr.stream_truncated));
+  const truncCount = Number(s.truncated_count !== undefined ? s.truncated_count : truncTraces.length);
+  const truncBox = document.getElementById("truncation-notice");
+  if (truncBox) {{
+    if (truncCount > 0) {{
+      const refs = truncTraces.map(tr => `#${{tr.turn_number}}`).join(", ");
+      truncBox.hidden = false;
+      truncBox.innerHTML = currentLang === "zh"
+        ? `<strong>${{escapeHtml(t.truncatedBadge)}}</strong> 共 ${{truncCount}} 轮上游响应流中途断开${{refs ? `（轮次 ${{escapeHtml(refs)}}）` : ""}} - ${{escapeHtml(t.truncatedIncomplete)}}。`
+        : `<strong>${{escapeHtml(t.truncatedBadge)}}</strong> ${{truncCount}} turn(s) ended prematurely before stream completion${{refs ? ` (turn ${{escapeHtml(refs)}})` : ""}} - ${{escapeHtml(t.truncatedIncomplete)}}.`;
+    }} else {{
+      truncBox.hidden = true;
+      truncBox.innerHTML = "";
+    }}
+  }}
   let costLabel = "";
   if (s.estimated_cost_usd === null || s.estimated_cost_usd === undefined) {{
-    costLabel = t.unknownPrice;
+    costLabel = truncCount > 0
+      ? (currentLang === "zh" ? `${{t.unknownPrice}}（${{t.truncatedIncomplete}}）` : `${{t.unknownPrice}} (${{t.truncatedIncomplete}})`)
+      : t.unknownPrice;
   }} else {{
     const baseCost = formatUsdValue(s.estimated_cost_usd);
-    const dateSuffix = pricingDate === "unverified"
-      ? (currentLang === "zh" ? `${{baseCost}}（未核对）` : `${{baseCost}} (unverified)`)
-      : `${{baseCost}} (${{pricingDate}})`;
-    costLabel = unknownTurns > 0
-      ? (currentLang === "zh" ? `${{baseCost}}（+${{unknownTurns}} 轮未知价格）` : `${{baseCost}} (+${{unknownTurns}} unknown price)`)
-      : dateSuffix;
+    let noteTxt = unknownTurns > 0
+      ? (currentLang === "zh" ? `+${{unknownTurns}} 轮未知价格` : `+${{unknownTurns}} unknown price`)
+      : (pricingDate === "unverified" ? (currentLang === "zh" ? "未核对" : "unverified") : pricingDate);
+    if (truncCount > 0) {{
+      noteTxt = currentLang === "zh" ? `${{noteTxt}}；${{t.truncatedIncomplete}}` : `${{noteTxt}}; ${{t.truncatedIncomplete}}`;
+    }}
+    costLabel = currentLang === "zh" ? `${{baseCost}}（${{noteTxt}}）` : `${{baseCost}} (${{noteTxt}})`;
   }}
 
   const kpi1ValStr = (totEst > 0 || allTraces.length === 0 || hasAnyBuckets) ? fmt(totEst) : t.noData;
+  const kpi1TruncSuffix = truncCount > 0
+    ? (currentLang === "zh" ? ` · ${{truncCount}} 轮${{t.truncatedBadge}}` : ` · ${{truncCount}} ${{t.truncatedBadge}}`)
+    : "";
   const kpi1Sub = currentLang === "zh"
-    ? `${{costLabel}} · 共 ${{allTraces.length}} 轮`
-    : `${{costLabel}} · ${{allTraces.length}} turns`;
+    ? `${{costLabel}} · 共 ${{allTraces.length}} 轮${{kpi1TruncSuffix}}`
+    : `${{costLabel}} · ${{allTraces.length}} turns${{kpi1TruncSuffix}}`;
   const kpi2Sub = currentLang === "zh"
     ? `工具定义占用（估算）：${{totEst > 0 ? fmt(toolDefTok) + ' tok' : t.noData}}`
     : `Tool Definition Tokens (Estimated): ${{totEst > 0 ? fmt(toolDefTok) + ' tok' : t.noData}}`;
@@ -1223,9 +1276,12 @@ function render() {{
     rowsEl.innerHTML = visible.map(({{ t: tr, idx }}) => {{
       const b = tr.buckets || {{}};
       const u = tr.usage || {{}};
+      const truncTag = tr.stream_truncated
+        ? `<span class="tag tag-warn">${{escapeHtml(t.truncatedBadge)}}</span>`
+        : "";
       const statusTag = tr.blocked
         ? `<span class="tag tag-signal">${{escapeHtml(t.blockedTag)}}</span>`
-        : `<span>${{tr.latency_ms}}&nbsp;ms</span>`;
+        : `${{truncTag}}<span>${{tr.latency_ms}}&nbsp;ms</span>`;
       const cls = ["turn-row", idx === selectedIdx ? "active" : "", tr.blocked ? "blocked" : ""].filter(Boolean).join(" ");
       const turnPrefix = currentLang === "zh" ? `第 ${{tr.turn_number}} 轮` : `Turn ${{tr.turn_number}}`;
       const titleTxt = localizePrompt(tr.prompt_preview || tr.path);
@@ -1284,7 +1340,13 @@ function render() {{
       : (currentLang === "zh"
           ? `第 ${{cur.turn_number}} 轮上下文解剖（估算）`
           : `Turn ${{cur.turn_number}} context anatomy (Estimated)`);
-    const turnCostStr = formatTurnCost(cur.estimated_cost_usd, t);
+    const baseTurnCostStr = formatTurnCost(cur.estimated_cost_usd, t);
+    const turnCostStr = cur.stream_truncated
+      ? (currentLang === "zh" ? `${{baseTurnCostStr}}（${{t.truncatedIncomplete}}）` : `${{baseTurnCostStr}} (${{t.truncatedIncomplete}})`)
+      : baseTurnCostStr;
+    const wellTruncBanner = cur.stream_truncated
+      ? `<div class="alert-banner"><strong>${{escapeHtml(t.truncatedBadge)}}</strong> ${{escapeHtml(t.truncatedTurnWarn)}}</div>`
+      : "";
     if (cur.has_bucket_breakdown === false) {{
       const uIn = Number(cu.input_tokens || 0);
       const uCr = Number(cu.cache_read_tokens || 0);
@@ -1305,6 +1367,7 @@ function render() {{
           <div class="well-stat"><div class="k">${{escapeHtml(t.aggOutput)}}</div><div class="v mono">${{fmt(uOut)}}</div></div>
           <div class="well-stat"><div class="k">${{escapeHtml(t.aggHitRate)}}</div><div class="v mono">${{uHit}}%</div></div>
         </div>
+        ${{wellTruncBanner}}
       `;
     }} else {{
       wellEl.innerHTML = `
@@ -1319,6 +1382,7 @@ function render() {{
           <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-results)"></i>${{escapeHtml(t.wellRes)}}</div><div class="v mono">${{fmt(cb.tool_results)}}</div></div>
           <div class="well-stat"><div class="k"><i class="swatch" style="background:var(--b-conv)"></i>${{escapeHtml(t.wellConv)}}</div><div class="v mono">${{fmt(cb.conversation)}}</div></div>
         </div>
+        ${{wellTruncBanner}}
       `;
     }}
   }} else {{

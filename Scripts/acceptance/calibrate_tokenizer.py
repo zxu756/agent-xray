@@ -3,12 +3,20 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import statistics
 import sys
+import threading
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
+
+_REPO_SRC = Path(__file__).resolve().parents[2] / "src"
+if _REPO_SRC.is_dir() and str(_REPO_SRC) not in sys.path:
+    sys.path.insert(0, str(_REPO_SRC))
 
 from agent_xray.classifier import classify_request_payload
 from agent_xray.proxy import start_background_proxy
@@ -168,7 +176,137 @@ def run_tokenizer_calibration(
     return results
 
 
-def main() -> int:
+def run_offline_pipeline_self_check(
+    *,
+    sample_count: int = 3,
+    timeout_s: float = 10.0,
+) -> dict[str, Any]:
+    """Offline loopback wiring self-check (`离线管线自检`): verifies proxy + classifier + usage recording WITHOUT claiming vendor tokenizer error."""
+
+    class _SyntheticFixtureUpstream(BaseHTTPRequestHandler):
+        def log_message(self, fmt: str, *args: object) -> None:
+            return
+
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length") or "0")
+            raw = self.rfile.read(length) if length else b"{}"
+            payload = json.loads(raw.decode("utf-8"))
+            fixture_in = 100 + int(payload.get("_fixture_idx") or 0) * 10
+            if "messages" in self.path and "chat/completions" not in self.path:
+                resp = {
+                    "id": "msg_self_check",
+                    "usage": {
+                        "input_tokens": fixture_in,
+                        "cache_read_input_tokens": 0,
+                        "cache_creation_input_tokens": 0,
+                        "output_tokens": 1,
+                    },
+                }
+            else:
+                resp = {
+                    "id": "chat_self_check",
+                    "usage": {
+                        "prompt_tokens": fixture_in,
+                        "completion_tokens": 1,
+                    },
+                }
+            out = json.dumps(resp).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _SyntheticFixtureUpstream)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with start_background_proxy(
+            db_path=":memory:",
+            anthropic_upstream=f"http://127.0.0.1:{port}",
+            openai_upstream=f"http://127.0.0.1:{port}/v1",
+        ) as proxy:
+            expected_inputs: list[int] = []
+            for idx in range(sample_count):
+                ant_body = _build_anthropic_sample(idx)
+                ant_body["_fixture_idx"] = idx
+                req_a = urllib.request.Request(
+                    f"{proxy.anthropic_base_url}/v1/messages",
+                    data=json.dumps(ant_body).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-api-key": "offline-self-check-ant",
+                        "anthropic-version": "2023-06-01",
+                    },
+                )
+                with urllib.request.urlopen(req_a, timeout=timeout_s) as resp_a:
+                    _ = resp_a.read()
+                expected_inputs.append(100 + idx * 10)
+
+            for idx in range(sample_count):
+                oai_body = _build_openai_sample(idx)
+                oai_body["_fixture_idx"] = idx
+                req_o = urllib.request.Request(
+                    f"{proxy.openai_base_url}/chat/completions",
+                    data=json.dumps(oai_body).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": "Bearer offline-self-check-oai",
+                    },
+                )
+                with urllib.request.urlopen(req_o, timeout=timeout_s) as resp_o:
+                    _ = resp_o.read()
+                expected_inputs.append(100 + idx * 10)
+
+            turns = proxy.get_turns(limit=sample_count * 4)
+            expected_total = sample_count * 2
+            if len(turns) != expected_total:
+                raise AssertionError(f"Expected {expected_total} self-check turns, got {len(turns)}")
+            ant_turns = [t for t in turns if t["provider"] == "anthropic"]
+            oai_turns = [t for t in turns if t["provider"] == "openai"]
+            matched = sum(
+                1
+                for t, exp_in in zip(turns, expected_inputs)
+                if t["input_tokens"] == exp_in and t["buckets"]["total_estimated"] > 0
+            )
+            return {
+                "mode": "offline_pipeline_self_check",
+                "recorded_turns": len(turns),
+                "anthropic_turns": len(ant_turns),
+                "openai_turns": len(oai_turns),
+                "synthetic_fixture_match": matched,
+                "live_vendor_api_executed": False,
+            }
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Tokenizer calibration & offline pipeline self-check.")
+    parser.add_argument(
+        "--offline-self-check",
+        action="store_true",
+        help="Run local loopback pipeline wiring self-check (does NOT measure vendor tokenizer accuracy).",
+    )
+    parser.add_argument("--samples", type=int, default=0, help="Override sample count per provider.")
+    args = parser.parse_args(argv)
+
+    if args.offline_self_check:
+        sc = args.samples if args.samples > 0 else 3
+        rep = run_offline_pipeline_self_check(sample_count=sc)
+        expected = sc * 2
+        if rep["recorded_turns"] != expected or rep["synthetic_fixture_match"] != expected:
+            print(f"FAIL: offline_pipeline_self_check mismatch: {rep}", file=sys.stderr)
+            return 1
+        print(
+            f"ROW 7 [离线管线自检 / offline_pipeline_self_check]: ok "
+            f"(recorded_turns={rep['recorded_turns']}, anthropic_turns={rep['anthropic_turns']}, "
+            f"openai_turns={rep['openai_turns']}, synthetic_fixture_match={rep['synthetic_fixture_match']}/{expected}; "
+            f"仅验证本地回环管线连通，非真实分词器误差 / local pipeline wiring self-check only, NOT vendor tokenizer accuracy)"
+        )
+        return 0
+
     ant_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     oai_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not ant_key and not oai_key:
@@ -180,7 +318,7 @@ def main() -> int:
 
     ant_url = os.environ.get("AGENT_XRAY_CALIBRATE_ANTHROPIC_URL", "https://api.anthropic.com")
     oai_url = os.environ.get("AGENT_XRAY_CALIBRATE_OPENAI_URL", "https://api.openai.com/v1")
-    sample_count = int(os.environ.get("AGENT_XRAY_CALIBRATE_SAMPLES", "5"))
+    sample_count = args.samples if args.samples > 0 else int(os.environ.get("AGENT_XRAY_CALIBRATE_SAMPLES", "5"))
 
     report = run_tokenizer_calibration(
         anthropic_base_url=ant_url,

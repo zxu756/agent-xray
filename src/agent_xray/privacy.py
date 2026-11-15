@@ -123,17 +123,23 @@ _UNCLOSED_PEM_REDACT_RE = re.compile(
     re.DOTALL,
 )
 _UNICODE_ESCAPE_RE = re.compile(r"\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})")
+_PERCENT_HEX_RE = re.compile(r"%[0-9A-Fa-f]{2}")
+_ENCODED_TOKEN_RE = re.compile(r'[^\s"\',;<>(){}\[\]\\]*%[0-9A-Fa-f]{2}[^\s"\',;<>(){}\[\]\\]*')
+
+UNCONVERGED_PATH_PLACEHOLDER = "/[REDACTED_UNCONVERGED_ENCODED_PATH]"
+UNCONVERGED_TEXT_PLACEHOLDER = "[REDACTED_UNCONVERGED_ENCODING]"
+UNCONVERGED_ENCODING_RULE = "Unconverged Percent-Encoding"
 
 
-def _unquote_iteratively(
+def _unquote_with_convergence(
     text: str,
     *,
     max_rounds: int = _MAX_UNQUOTE_ROUNDS,
     plus: bool = False,
-) -> list[str]:
-    """Iteratively percent-decodes text until stable or max_rounds is reached."""
+) -> tuple[list[str], bool]:
+    """Iteratively percent-decodes text up to max_rounds and reports whether decoding converged."""
     if not text:
-        return []
+        return [], True
     variants = [text]
     cur = text
     decoder = urllib.parse.unquote_plus if plus else urllib.parse.unquote
@@ -145,7 +151,18 @@ def _unquote_iteratively(
             break
         variants.append(nxt)
         cur = nxt
-    return variants
+    converged = (not bool(_PERCENT_HEX_RE.search(cur))) and not (plus and "+" in cur)
+    return variants, converged
+
+
+def _unquote_iteratively(
+    text: str,
+    *,
+    max_rounds: int = _MAX_UNQUOTE_ROUNDS,
+    plus: bool = False,
+) -> list[str]:
+    """Iteratively percent-decodes text until stable or max_rounds is reached."""
+    return _unquote_with_convergence(text, max_rounds=max_rounds, plus=plus)[0]
 
 
 class HeaderPairs:
@@ -445,20 +462,37 @@ def _redact_direct_matches(text: str) -> str:
     return scrubbed
 
 
+def _scan_direct_text_for_secrets(text: str, *, field: str) -> list[SecretFinding]:
+    if not text:
+        return []
+    out: list[SecretFinding] = []
+    for rule_name, pattern in SECRET_PATTERNS:
+        if pattern.search(text):
+            out.append(SecretFinding(rule=rule_name, field=field))
+    return out
+
+
 def scan_body_for_secrets(raw_text: str, *, field: str = "body") -> list[SecretFinding]:
     """Detects live credential patterns in text (including multi-round URL-encoded text) without storing secrets."""
     if not raw_text:
         return []
     findings: list[SecretFinding] = []
     seen: set[tuple[str, str]] = set()
-    candidates = _unquote_iteratively(raw_text) if "%" in raw_text else [raw_text]
+    if "%" in raw_text:
+        candidates, converged = _unquote_with_convergence(raw_text, max_rounds=_MAX_UNQUOTE_ROUNDS)
+    else:
+        candidates, converged = [raw_text], True
     for candidate in candidates:
-        for rule_name, pattern in SECRET_PATTERNS:
-            if pattern.search(candidate):
-                key = (rule_name, field)
-                if key not in seen:
-                    seen.add(key)
-                    findings.append(SecretFinding(rule=rule_name, field=field))
+        for f in _scan_direct_text_for_secrets(candidate, field=field):
+            key = (f.rule, f.field)
+            if key not in seen:
+                seen.add(key)
+                findings.append(f)
+    if not converged:
+        key = (UNCONVERGED_ENCODING_RULE, field)
+        if key not in seen:
+            seen.add(key)
+            findings.append(SecretFinding(rule=UNCONVERGED_ENCODING_RULE, field=field))
     return findings
 
 
@@ -529,34 +563,75 @@ def scan_request_for_secrets(
                 seen.add(key)
                 findings.append(item)
 
-    # 1. URL path & query string (iteratively unquoted up to _MAX_UNQUOTE_ROUNDS)
+    # 1. URL path & query string (iteratively unquoted strictly up to _MAX_UNQUOTE_ROUNDS)
     if raw_path:
         parts = urllib.parse.urlsplit(raw_path)
-        for path_variant in _unquote_iteratively(parts.path):
+        path_stages, path_converged = _unquote_with_convergence(
+            parts.path,
+            max_rounds=_MAX_UNQUOTE_ROUNDS,
+        )
+        for path_variant in path_stages:
             if path_variant:
-                _add(scan_body_for_secrets(path_variant, field="url.path"))
+                _add(_scan_direct_text_for_secrets(path_variant, field="url.path"))
+        if not path_converged:
+            _add([SecretFinding(rule=UNCONVERGED_ENCODING_RULE, field="url.path")])
+
         if parts.query:
             query_rules_before = len(findings)
-            for qk, qv in urllib.parse.parse_qsl(parts.query, keep_blank_values=True):
-                for qk_variant in _unquote_iteratively(qk, plus=True):
-                    _add(scan_body_for_secrets(qk_variant, field="url.query.<key>"))
-                safe_qk = redact_secrets_in_text(qk) or "param"
-                for qv_variant in _unquote_iteratively(qv, plus=True):
-                    _add(scan_body_for_secrets(qv_variant, field=f"url.query.{safe_qk}"))
+            for raw_pair in parts.query.split("&"):
+                if not raw_pair:
+                    continue
+                raw_qk, _sep, raw_qv = raw_pair.partition("=")
+                qk_stages, qk_converged = _unquote_with_convergence(
+                    raw_qk,
+                    max_rounds=_MAX_UNQUOTE_ROUNDS,
+                    plus=True,
+                )
+                for qk_variant in qk_stages:
+                    _add(_scan_direct_text_for_secrets(qk_variant, field="url.query.<key>"))
+                if not qk_converged:
+                    _add([SecretFinding(rule=UNCONVERGED_ENCODING_RULE, field="url.query.<key>")])
+                    safe_qk = UNCONVERGED_TEXT_PLACEHOLDER
+                else:
+                    safe_qk = redact_secrets_in_text(qk_stages[-1] if qk_stages else "") or "param"
+
+                qv_stages, qv_converged = _unquote_with_convergence(
+                    raw_qv,
+                    max_rounds=_MAX_UNQUOTE_ROUNDS,
+                    plus=True,
+                )
+                for qv_variant in qv_stages:
+                    _add(_scan_direct_text_for_secrets(qv_variant, field=f"url.query.{safe_qk}"))
+                if not qv_converged:
+                    _add([SecretFinding(rule=UNCONVERGED_ENCODING_RULE, field=f"url.query.{safe_qk}")])
+
             if len(findings) == query_rules_before:
-                for q_variant in _unquote_iteratively(parts.query, plus=True):
-                    _add(scan_body_for_secrets(q_variant, field="url.query"))
+                q_stages, q_converged = _unquote_with_convergence(
+                    parts.query,
+                    max_rounds=_MAX_UNQUOTE_ROUNDS,
+                    plus=True,
+                )
+                for q_variant in q_stages:
+                    _add(_scan_direct_text_for_secrets(q_variant, field="url.query"))
+                if not q_converged:
+                    _add([SecretFinding(rule=UNCONVERGED_ENCODING_RULE, field="url.query")])
 
     # 2. Request headers (exempting only upstream API auth header values)
     for h_name, h_val in headers:
-        for hn_variant in _unquote_iteratively(h_name):
-            _add(scan_body_for_secrets(hn_variant, field="header.<name>"))
+        hn_stages, hn_converged = _unquote_with_convergence(h_name, max_rounds=_MAX_UNQUOTE_ROUNDS)
+        for hn_variant in hn_stages:
+            _add(_scan_direct_text_for_secrets(hn_variant, field="header.<name>"))
+        if not hn_converged:
+            _add([SecretFinding(rule=UNCONVERGED_ENCODING_RULE, field="header.<name>")])
         if h_name.lower() in LEGIT_UPSTREAM_AUTH_HEADERS:
             continue
         safe_h_name = redact_secrets_in_text(h_name)
         field_name = f"header.{safe_h_name}"
-        for hv_variant in _unquote_iteratively(h_val):
-            _add(scan_body_for_secrets(hv_variant, field=field_name))
+        hv_stages, hv_converged = _unquote_with_convergence(h_val, max_rounds=_MAX_UNQUOTE_ROUNDS)
+        for hv_variant in hv_stages:
+            _add(_scan_direct_text_for_secrets(hv_variant, field=field_name))
+        if not hv_converged:
+            _add([SecretFinding(rule=UNCONVERGED_ENCODING_RULE, field=field_name)])
 
     # 3. Request body (with bounded gzip/deflate decompression)
     inspected_body, comp_err = decode_request_body_for_inspection(
@@ -583,26 +658,50 @@ def scan_request_for_secrets(
 
 
 def redact_secrets_in_text(text: str) -> str:
-    """Replaces all matched credentials and PEM private key blocks before any truncation."""
+    """Replaces all matched credentials, PEM blocks, and unconverged deep percent-encodings before truncation."""
     if not text:
         return ""
     scrubbed = _redact_direct_matches(text)
     if "%" in scrubbed:
-        stages = _unquote_iteratively(scrubbed)
+        stages, converged = _unquote_with_convergence(scrubbed, max_rounds=_MAX_UNQUOTE_ROUNDS)
+        if not converged:
+            if scrubbed.startswith("/") and not any(
+                ch in scrubbed for ch in (" ", "\t", "\r", "\n", '"', "'", "{", "}", "[", "]")
+            ):
+                return UNCONVERGED_PATH_PLACEHOLDER
+
+            def _scrub_encoded_token(match: re.Match[str]) -> str:
+                tok = match.group(0)
+                tok_stages, tok_converged = _unquote_with_convergence(tok, max_rounds=_MAX_UNQUOTE_ROUNDS)
+                if not tok_converged:
+                    return UNCONVERGED_TEXT_PLACEHOLDER
+                if any(_has_direct_secret_match(s) for s in tok_stages[1:]):
+                    return _redact_direct_matches(tok_stages[-1])
+                return tok
+
+            token_scrubbed = _ENCODED_TOKEN_RE.sub(_scrub_encoded_token, scrubbed)
+            post_stages, post_converged = _unquote_with_convergence(token_scrubbed, max_rounds=_MAX_UNQUOTE_ROUNDS)
+            if not post_converged:
+                return UNCONVERGED_TEXT_PLACEHOLDER
+            if any(_has_direct_secret_match(stage) for stage in post_stages[1:]):
+                return _redact_direct_matches(post_stages[-1])
+            return token_scrubbed
         if any(_has_direct_secret_match(stage) for stage in stages[1:]):
             return _redact_direct_matches(stages[-1])
     return scrubbed
 
 
 def normalize_trace_path(raw_path: str) -> str:
-    """Strips URL query/fragment components and redacts any secret in the path across iterative percent-decoding."""
+    """Strips URL query/fragment components and redacts secrets or unconverged deep encodings in the path."""
     if not raw_path:
         return ""
     stripped = raw_path
     if "?" in stripped or (stripped.startswith("/") and "#" in stripped):
         parts = urllib.parse.urlsplit(stripped)
         stripped = parts.path or "/"
-    stages = _unquote_iteratively(stripped)
+    stages, converged = _unquote_with_convergence(stripped, max_rounds=_MAX_UNQUOTE_ROUNDS)
+    if not converged:
+        return UNCONVERGED_PATH_PLACEHOLDER
     if any(_has_direct_secret_match(stage) for stage in stages):
         return _redact_direct_matches(stages[-1])
     return stripped

@@ -398,6 +398,41 @@ class ClassifierHonestyTests(unittest.TestCase):
         self.assertGreaterEqual(report["openai"]["max_error"], 0.0)
         self.assertLess(report["openai"]["max_error"], 0.25)
 
+    def test_xr7_offline_pipeline_self_check_does_not_report_synthetic_ratio_as_tokenizer_error(self) -> None:
+        import importlib.util
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[1]
+        script_path = repo_root / "Scripts" / "acceptance" / "calibrate_tokenizer.py"
+        spec = importlib.util.spec_from_file_location("calibrate_tokenizer", script_path)
+        self.assertIsNotNone(spec)
+        assert spec is not None and spec.loader is not None
+        cal_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cal_mod)
+
+        self.assertTrue(hasattr(cal_mod, "run_offline_pipeline_self_check"))
+        rep = cal_mod.run_offline_pipeline_self_check(sample_count=3)
+        self.assertEqual(rep["mode"], "offline_pipeline_self_check")
+        self.assertEqual(rep["recorded_turns"], 6)
+        self.assertEqual(rep["anthropic_turns"], 3)
+        self.assertEqual(rep["openai_turns"], 3)
+        self.assertEqual(rep["synthetic_fixture_match"], 6)
+        self.assertNotIn("max_error", json.dumps(rep))
+
+        proc = subprocess.run(
+            [sys.executable, str(script_path), "--offline-self-check"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        out = (proc.stdout or "") + (proc.stderr or "")
+        self.assertIn("离线管线自检", out)
+        self.assertIn("offline_pipeline_self_check", out)
+        for forbidden in ("max_err", "max_error", "mean_error", "median_error"):
+            self.assertNotIn(forbidden, out)
+
 
 if __name__ == "__main__":
     unittest.main()

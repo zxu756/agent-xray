@@ -433,6 +433,104 @@ class PrivacyAndRedactionTests(unittest.TestCase):
         self.assertIn("SECRET_PATTERNS", spec_md)
         self.assertIn("arbitrary formatless", spec_md.lower())
 
+    def test_xr5_unconverged_percent_encoding_placeholder_and_strict_8_round_cap(self) -> None:
+        import time
+        import urllib.parse
+        from agent_xray import privacy
+        from agent_xray.privacy import (
+            normalize_trace_path,
+            redact_secrets_in_text,
+            scan_body_for_secrets,
+            scan_request_for_secrets,
+        )
+
+        # Hard rule: _MAX_UNQUOTE_ROUNDS must stay strictly 8 (never bumped to mask deep nesting)
+        self.assertEqual(privacy._MAX_UNQUOTE_ROUNDS, 8)
+        placeholder_path = getattr(privacy, "UNCONVERGED_PATH_PLACEHOLDER", "/[REDACTED_UNCONVERGED_ENCODED_PATH]")
+        self.assertEqual(placeholder_path, "/[REDACTED_UNCONVERGED_ENCODED_PATH]")
+
+        def encode_dash_layers(secret: str, layers: int) -> str:
+            cur = secret.replace("-", "%2D")
+            for _ in range(layers - 1):
+                cur = urllib.parse.quote(cur, safe="")
+            return cur
+
+        def encode_full_hex_layers(secret: str, layers: int) -> str:
+            cur = "".join(f"%{ord(ch):02X}" for ch in secret)
+            for _ in range(layers - 1):
+                cur = urllib.parse.quote(cur, safe="")
+            return cur
+
+        fake_secrets = [
+            ("sk_test", "sk-test-FAKE1234567890abcdef", "FAKE1234567890abcdef"),
+            ("sk_ant", "sk-ant-FAKE00001234567890abcdef", "FAKE00001234567890abcdef"),
+        ]
+
+        # 1..8 layers converge within 8 rounds: secrets redact segment-level, benign paths stay intact
+        for label, raw_sec, tail_probe in fake_secrets:
+            for depth in (1, 2, 8):
+                with self.subTest(secret=label, depth=depth, mode="converged"):
+                    enc = encode_dash_layers(raw_sec, depth)
+                    norm = normalize_trace_path(f"/anthropic/{enc}/v1/messages?q=1")
+                    self.assertEqual(norm, "/anthropic/[REDACTED]/v1/messages")
+                    self.assertNotIn(tail_probe, norm)
+                    res = scan_request_for_secrets(raw_path=f"/anthropic/{enc}/v1/messages?leak={enc}")
+                    fields = {f.field for f in res.findings}
+                    self.assertIn("url.path", fields)
+                    self.assertIn("url.query.leak", fields)
+
+        # Benign 1..8 layer non-secret path still preserved verbatim
+        benign_8 = "my%20doc"
+        for _ in range(7):
+            benign_8 = urllib.parse.quote(benign_8, safe="")
+        self.assertEqual(normalize_trace_path(f"/v1/files/{benign_8}?x=1"), f"/v1/files/{benign_8}")
+        self.assertEqual(scan_request_for_secrets(raw_path=f"/v1/files/{benign_8}?q=C%2B%2B").findings, [])
+
+        # 9, 12, 17, and 100 layers do NOT converge in 8 rounds:
+        # entire path must become /[REDACTED_UNCONVERGED_ENCODED_PATH] and scan must flag unconverged encoding
+        for label, raw_sec, tail_probe in fake_secrets:
+            for encoder_name, enc_fn in [("dash", encode_dash_layers), ("full_hex", encode_full_hex_layers)]:
+                for depth in (9, 12, 17, 100):
+                    with self.subTest(secret=label, encoder=encoder_name, depth=depth):
+                        enc = enc_fn(raw_sec, depth)
+                        raw_path = f"/anthropic/{enc}/v1/messages"
+                        norm = normalize_trace_path(raw_path)
+                        self.assertEqual(norm, "/[REDACTED_UNCONVERGED_ENCODED_PATH]")
+                        self.assertNotIn(tail_probe, norm)
+                        self.assertNotIn("%25", norm)
+
+                        red_inline = redact_secrets_in_text(json.dumps({"note": f"ref={enc}"}))
+                        parsed_inline = json.loads(red_inline)
+                        self.assertNotIn(tail_probe, red_inline)
+                        self.assertNotIn("%25", red_inline)
+                        self.assertIn("REDACTED", parsed_inline["note"])
+
+                        body_findings = scan_body_for_secrets(enc, field="messages[0].content")
+                        self.assertGreaterEqual(len(body_findings), 1)
+
+                        req_res = scan_request_for_secrets(
+                            raw_path=f"{raw_path}?leak={enc}",
+                            headers=[("X-Custom-Ref", enc)],
+                            raw_body=json.dumps({"messages": [{"role": "user", "content": enc}]}).encode("utf-8"),
+                        )
+                        fields = {f.field for f in req_res.findings}
+                        self.assertIn("url.path", fields)
+                        self.assertIn("url.query.leak", fields)
+                        self.assertIn("header.X-Custom-Ref", fields)
+                        self.assertIn("messages[0].content", fields)
+
+        # 3000-layer input finishes rapidly without hanging
+        enc_3000 = encode_dash_layers("sk-test-FAKE1234567890abcdef", 3000)
+        t0 = time.monotonic()
+        self.assertEqual(
+            normalize_trace_path(f"/anthropic/{enc_3000}/v1/messages"),
+            "/[REDACTED_UNCONVERGED_ENCODED_PATH]",
+        )
+        res_3000 = scan_request_for_secrets(raw_path=f"/anthropic/{enc_3000}/v1/messages")
+        elapsed = time.monotonic() - t0
+        self.assertGreaterEqual(len(res_3000.findings), 1)
+        self.assertLess(elapsed, 0.5)
+
 
 if __name__ == "__main__":
     unittest.main()

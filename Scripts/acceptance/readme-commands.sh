@@ -359,12 +359,11 @@ try:
 
                 tokens = shlex.split(cmd_str)
                 assert tokens[0] == "agent-xray", f"Unexpected command binary in {doc_name}: {cmd_str}"
-                tokens[0] = xray_bin
-                tokens = [
+                tokens = [xray_bin] + [
                     t.replace("/tmp/", f"{doc_tmp}/")
                     .replace("docs/demo-inspector.html", str(doc_tmp / "demo-inspector.html"))
                     .replace("http://127.0.0.1:9000", f"http://127.0.0.1:{upstream_port}")
-                    for t in tokens
+                    for t in tokens[1:]
                 ]
 
                 # Placeholder `<your-agent-command>` / `<你的智能体命令>`: run BOTH normal & blocked turns
